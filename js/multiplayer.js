@@ -17,6 +17,8 @@
   const STALE_MS = 15000;      // hide a robot that hasn't been heard from for this long
   const BUBBLE_MS = 7000;      // how long a chat bubble stays above a robot
   const MAX_CHAT = 200;        // characters per message
+  // People in the museum at once (logged-in admins don't count). Set in js/supabase-config.js.
+  const MAX_VISITORS = Math.max(1, Number((window.MUSEUM_SUPABASE || {}).maxVisitors) || 10);
   const ROBOT_SCALE = 1;
 
   // ---------- identity ----------
@@ -335,6 +337,8 @@
 
   // ---------- realtime ----------
   let channel, track;
+  let isPresent = false; // counted in the museum (not waiting outside)
+  const setPresent = (v) => { isPresent = v; };
 
   async function start() {
     await MuseumStore.ready;
@@ -347,24 +351,29 @@
     scene.object3D.add(container);
     const myColour = colourFor(myId);
     const announced = new Set(); // visitors whose arrival was already shown
-    const nameChosen = askNickname(myColour);
-    nameChosen.then(() => {
-      buildChat();
-      if (subscribed) { track(); systemLine(`Connected as ${myName}. Press Enter to chat.`); }
-      // Say who's already here (their arrivals happened before the chat opened).
-      const others = Object.entries(channel.presenceState())
-        .filter(([id]) => id !== myId)
-        .map(([id, metas]) => { announced.add(id); return cleanName(metas[0] && metas[0].name) || 'Visitor'; });
-      if (others.length) systemLine(`Here now: ${others.join(', ')}`);
-      if (chatCount) chatCount.textContent = others.length ? `${others.length + 1} people here` : 'Just you';
-    });
-    let subscribed = false;
+    let isAdmin = false;          // logged-in admins skip the visitor limit
+    try { isAdmin = await online.isAdmin(); } catch { /* not logged in */ }
+    let joinedAt = 0;
+    const syncWaiters = [];       // run on every presence update (room checks)
 
     channel = online.sb.channel('museum-lobby', {
       config: { presence: { key: myId }, broadcast: { self: false } }
     });
 
-    track = () => channel.track({ name: myName, color: '#' + myColour.getHexString() });
+    track = () => channel.track({ name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin });
+
+    // ---- the 10-visitor limit ----
+    // Visitors who count: everyone present except logged-in admins.
+    const counted = () => Object.entries(channel.presenceState()).filter(([, m]) => m[0] && !m[0].admin);
+    const othersInside = () => counted().filter(([id]) => id !== myId).length;
+    // If two people take the last place at the same moment, the earlier arrival keeps it.
+    const withinLimit = () => {
+      const order = counted()
+        .map(([id, m]) => ({ id, t: m[0].joinedAt || 0 }))
+        .sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : 1));
+      const i = order.findIndex((v) => v.id === myId);
+      return i === -1 || i < MAX_VISITORS;
+    };
 
     channel.on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
@@ -372,6 +381,15 @@
       if (chatCount) chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
       ids.filter((id) => id !== myId).forEach((id) => ensurePeer(id, state[id][0] || {}));
       [...peers.keys()].forEach((id) => { if (!ids.includes(id)) removePeer(id); });
+      syncWaiters.slice().forEach((f) => f());
+      if (present && !isAdmin && !withinLimit()) {
+        // Lost a simultaneous race for the last place: step back out and wait.
+        present = false;
+        setPresent(false);
+        channel.untrack();
+        systemLine('The museum just filled up. You\'ll be let back in when someone leaves.');
+        waitForRoom().then(enterRoom);
+      }
     });
     // A name change arrives as leave + join for the same visitor: report it as a rename.
     channel.on('presence', { event: 'join' }, ({ key, newPresences }) => {
@@ -418,6 +436,7 @@
 
     let lastSent = 0;
     onSend = (text) => {
+      if (!isPresent) return false; // waiting outside a full museum
       const now = Date.now();
       if (now - lastSent < 800) return false; // gentle rate limit
       lastSent = now;
@@ -426,14 +445,72 @@
       return true;
     };
 
+    // Waiting card while the museum is full; resolves when there's room.
+    function waitForRoom() {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.id = 'nick-overlay';
+        overlay.innerHTML = `
+          <div id="nick-card" role="dialog" aria-modal="true" aria-labelledby="full-title">
+            <div class="nick-dot" aria-hidden="true"></div>
+            <h2 id="full-title">The museum is full</h2>
+            <p id="full-count"></p>
+            <p>You'll be let in automatically as soon as someone leaves. Keep this page open.</p>
+          </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('.nick-dot').style.background = '#' + myColour.getHexString();
+        const check = () => {
+          const n = othersInside();
+          overlay.querySelector('#full-count').textContent = `${Math.min(n, MAX_VISITORS)} of ${MAX_VISITORS} visitors are inside right now.`;
+          if (n < MAX_VISITORS) {
+            syncWaiters.splice(syncWaiters.indexOf(check), 1);
+            overlay.remove();
+            resolve();
+          }
+        };
+        syncWaiters.push(check);
+        check();
+      });
+    }
+
+    let present = false; // tracked in presence = counted, visible and able to chat
+    function enterRoom() {
+      joinedAt = Date.now();
+      present = true;
+      setPresent(true);
+      track();
+    }
+
+    let subscribed;
+    const subscribedOnce = new Promise((res) => { subscribed = res; });
+    let firstSync;
+    const firstSyncOnce = new Promise((res) => { firstSync = res; setTimeout(res, 4000); });
+    syncWaiters.push(() => firstSync());
+
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        subscribed = true;
-        // Appear to others (presence) only once a nickname is chosen.
-        if (chatLog) { track(); systemLine(`Connected as ${myName}. Press Enter to chat.`); }
+        subscribed();
+        if (present) track(); // reconnected: show up again
       }
       if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && chatLog) systemLine('Chat connection problem, retrying…');
     });
+
+    // Entry: check there's room, ask for a nickname, then appear to everyone.
+    await subscribedOnce;
+    await firstSyncOnce;
+    if (!isAdmin && othersInside() >= MAX_VISITORS) await waitForRoom();
+    await askNickname(myColour);
+    buildChat();
+    if (!isAdmin && othersInside() >= MAX_VISITORS) {
+      systemLine('Someone took the last place while you were choosing a name.');
+      await waitForRoom();
+    }
+    enterRoom();
+    systemLine(`Connected as ${myName}. Press Enter to chat.${isAdmin ? ' (Admins don\'t count toward the visitor limit.)' : ''}`);
+    const others = Object.entries(channel.presenceState())
+      .filter(([id]) => id !== myId)
+      .map(([id, metas]) => { announced.add(id); return cleanName(metas[0] && metas[0].name) || 'Visitor'; });
+    if (others.length) systemLine(`Here now: ${others.join(', ')}`);
 
     startPoseLoop(scene);
     animate(scene);
@@ -447,7 +524,7 @@
     let last = null, lastAt = 0;
     const r2 = (n) => Math.round(n * 100) / 100;
     setInterval(() => {
-      if (!channel || !chatLog) return; // stay invisible to others until a nickname is chosen
+      if (!channel || !isPresent) return; // invisible to others until named and let in
       cam.object3D.getWorldPosition(pos);
       cam.object3D.getWorldDirection(fwd).negate(); // the camera entity looks down -z
       const yaw = Math.atan2(fwd.x, fwd.z);
