@@ -34,6 +34,9 @@
       return id;
     } catch { return String(Math.random()).slice(2); }
   })();
+  // Which kind of device a visitor is on (shown in chat when they join).
+  const device = /OculusBrowser|Quest|Pico|Wolvic/i.test(navigator.userAgent) ? 'headset'
+    : /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'phone' : 'computer';
   const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24);
   let myName = cleanName(store.get('museum-visitor-name')) || `Visitor ${Math.floor(10 + Math.random() * 90)}`;
 
@@ -436,7 +439,7 @@
       config: { presence: { key: myId }, broadcast: { self: false } }
     });
 
-    track = () => channel.track({ name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin });
+    track = () => channel.track({ name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device });
 
     // ---- the 10-visitor limit ----
     // Visitors who count: everyone present except logged-in admins.
@@ -476,7 +479,8 @@
         if (known && known.name && known.name !== name) systemLine(`${known.name} is now ${name}`);
       } else {
         announced.add(key);
-        systemLine(`${name} joined`);
+        const dev = newPresences[0].device;
+        systemLine(`${name} joined${dev ? ` (on a ${dev})` : ''}`);
       }
     });
     channel.on('presence', { event: 'leave' }, ({ key, leftPresences }) => {

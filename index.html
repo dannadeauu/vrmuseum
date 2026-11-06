@@ -9,20 +9,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap">
-  <link rel="stylesheet" href="css/admin.css">
-  <link rel="stylesheet" href="css/chat.css">
-  <script src="js/components.js"></script>
-  <script src="js/architecture.js"></script>
-  <script src="js/rooms.js"></script>
+  <link rel="stylesheet" href="css/admin.css?v=2026110601">
+  <link rel="stylesheet" href="css/chat.css?v=2026110601">
+  <script src="js/components.js?v=2026110601"></script>
+  <script src="js/architecture.js?v=2026110601"></script>
+  <script src="js/rooms.js?v=2026110601"></script>
   <!-- Shared online museum (Supabase): library, then your project settings -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-  <script src="js/supabase-config.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/user-exhibits.js"></script>
+  <script src="js/supabase-config.js?v=2026110601"></script>
+  <script src="js/store.js?v=2026110601"></script>
+  <script src="js/user-exhibits.js?v=2026110601"></script>
   <!-- Admin mode: open the page with ?admin in the URL -->
-  <script src="js/admin.js"></script>
+  <script src="js/admin.js?v=2026110601"></script>
   <!-- Other visitors as robots + text chat (needs the online museum) -->
-  <script src="js/multiplayer.js"></script>
+  <script src="js/multiplayer.js?v=2026110601"></script>
 </head>
 <body>
   <!--
@@ -47,13 +47,13 @@
          rig moves in VR (thumbsticks); camera moves on desktop (WASD).
          bounds keeps either one inside the rotunda, the passages and the galleries. -->
     <a-entity id="rig" position="0 0 7"
-              thumbstick-locomotion="leftHand: #leftHand; rightHand: #rightHand; speed: 2; turn: smooth; turnSpeed: 90"
+              thumbstick-locomotion="leftHand: #leftHand; rightHand: #rightHand; speed: 5; turn: smooth; turnSpeed: 90"
               bounds="layout: true"
               jump="height: 1; gravity: 20; hand: #rightHand"
               spawn-facing="target: starter-sign; distance: 7">
       <a-entity id="camera" camera="near: 0.05; far: 150" position="0 1.6 0"
                 look-controls="pointerLockEnabled: false"
-                wasd-controls="acceleration: 25"
+                wasd-controls="acceleration: 40"
                 cursor="rayOrigin: mouse; fuse: false"
                 raycaster="objects: .clickable; far: 20"></a-entity>
       <a-entity id="leftHand"  laser-controls="hand: left"  raycaster="objects: .clickable; far: 20; lineColor: #e8e2d6; lineOpacity: 0.5"></a-entity>

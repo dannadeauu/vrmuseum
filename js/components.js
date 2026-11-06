@@ -354,7 +354,9 @@ AFRAME.registerComponent('spawn-facing', {
   schema: {
     target: { default: 'starter-sign' }, // saved item id to face
     distance: { default: 7 },            // how far from the centre to start, on the far side
-    maxRadius: { default: 10.5 }         // only follow targets inside the rotunda
+    maxRadius: { default: 10.5 },        // only follow targets inside the rotunda
+    spread: { default: 2.5 }             // metres of random side-to-side offset, so visitors who
+                                         // arrive together don't stand inside each other
   },
   init() {
     this.done = false;
@@ -362,13 +364,17 @@ AFRAME.registerComponent('spawn-facing', {
       if (this.done) return;
       this.done = true;
       const t = (e.detail.items || []).find((r) => r.id === this.data.target);
-      if (!t) return;
-      const { x, z } = t.position;
-      const r = Math.hypot(x, z);
-      if (r < 0.5 || r > this.data.maxRadius) return;
-      const dx = x / r, dz = z / r;
+      // Direction from the centre toward what we face (default: north, like the rig's start).
+      let dx = 0, dz = -1;
+      if (t) {
+        const r = Math.hypot(t.position.x, t.position.z);
+        if (r >= 0.5 && r <= this.data.maxRadius) { dx = t.position.x / r; dz = t.position.z / r; }
+      }
+      const side = (Math.random() * 2 - 1) * this.data.spread;  // left/right of the centre line
+      const back = (Math.random() * 2 - 1) * 0.8;               // a little nearer or further
+      const dist = this.data.distance + back;
       const rig = this.el.object3D;
-      rig.position.set(-dx * this.data.distance, rig.position.y, -dz * this.data.distance);
+      rig.position.set(-dx * dist - dz * side, rig.position.y, -dz * dist + dx * side);
       rig.rotation.set(0, Math.atan2(-dx, -dz), 0); // the camera looks down -z; turn it toward the sign
       const lc = this.el.querySelector('[look-controls]');
       if (lc && lc.components['look-controls']) {
