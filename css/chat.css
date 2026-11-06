@@ -1,0 +1,64 @@
+/* Visitor chat (js/multiplayer.js). Bottom-left, out of the way of the admin panel. */
+#chat {
+  --chat-bg: rgba(20, 22, 30, 0.86);
+  --chat-fg: #f2efe9;
+  --chat-muted: #a9a49b;
+  --chat-line: rgba(242, 239, 233, 0.16);
+  --chat-accent: #ffb347;
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 9;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+  color: var(--chat-fg);
+  border: 1px solid var(--chat-line);
+  border-radius: 12px;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#chat header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--chat-line);
+}
+#chat-count { font-weight: 600; white-space: nowrap; }
+#chat .chat-name { flex: 1; min-width: 0; color: var(--chat-muted); display: flex; align-items: center; gap: 4px; }
+#chat .chat-name input {
+  flex: 1; min-width: 0; padding: 3px 6px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--chat-fg); font: inherit;
+}
+#chat .chat-name input:hover, #chat .chat-name input:focus { border-color: var(--chat-line); background: rgba(255,255,255,0.06); outline: none; }
+#chat-toggle {
+  background: none; border: 0; color: var(--chat-fg); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+#chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#chat-log li { overflow-wrap: anywhere; }
+#chat-log li.system { color: var(--chat-muted); font-style: italic; font-size: 12px; }
+#chat-log li.self span { color: #ffffff; }
+#chat-form { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--chat-line); }
+#chat-input {
+  flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--chat-line); border-radius: 6px;
+  background: rgba(255,255,255,0.06); color: var(--chat-fg); font: inherit;
+}
+#chat-input:focus { outline: none; border-color: var(--chat-accent); }
+#chat-form button {
+  padding: 6px 12px; border: 0; border-radius: 6px; background: var(--chat-accent); color: #1b1b1f;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+#chat.collapsed #chat-log, #chat.collapsed #chat-form { display: none; }
