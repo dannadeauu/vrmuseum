@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Virtual Museum</title>
+  <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+  <!-- Playfair Display for signs (drawn onto the sign textures in js/user-exhibits.js) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap">
+  <link rel="stylesheet" href="css/admin.css">
+  <script src="js/components.js"></script>
+  <script src="js/architecture.js"></script>
+  <script src="js/rooms.js"></script>
+  <!-- Shared online museum (Supabase): library, then your project settings -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
+  <script src="js/supabase-config.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/user-exhibits.js"></script>
+  <!-- Admin mode: open the page with ?admin in the URL -->
+  <script src="js/admin.js"></script>
+</head>
+<body>
+  <!--
+    renderer settings tuned for Quest:
+      - foveationLevel lowers resolution at the lens edges (cheap win on Quest)
+      - highRefreshRate asks for 90Hz when available
+      - no real-time shadows anywhere (bake lighting into textures instead)
+  -->
+  <a-scene
+    renderer="antialias: true; colorManagement: true; foveationLevel: 1; highRefreshRate: true"
+    background="color: #1b1b1f"
+    loading-screen="dotsColor: #e8e2d6; backgroundColor: #1b1b1f"
+    gltf-model="dracoDecoderPath: https://www.gstatic.com/draco/versioned/decoders/1.5.7/">
+
+    <a-assets>
+      <!-- Put real artwork here, e.g.:
+           <img id="art-monet" src="assets/monet.jpg" crossorigin="anonymous">
+           <a-asset-item id="statue" src="assets/statue.glb"></a-asset-item> -->
+    </a-assets>
+
+    <!-- ===== Player rig =====
+         rig moves in VR (thumbsticks); camera moves on desktop (WASD).
+         bounds keeps either one inside the rotunda, the passages and the galleries. -->
+    <a-entity id="rig" position="0 0 7"
+              thumbstick-locomotion="leftHand: #leftHand; rightHand: #rightHand; speed: 2; snapAngle: 45"
+              bounds="layout: true"
+              jump="height: 1; gravity: 20"
+              spawn-facing="target: starter-sign; distance: 7">
+      <a-entity id="camera" camera="near: 0.05; far: 150" position="0 1.6 0"
+                look-controls="pointerLockEnabled: false"
+                wasd-controls="acceleration: 25"
+                cursor="rayOrigin: mouse; fuse: false"
+                raycaster="objects: .clickable; far: 20"></a-entity>
+      <a-entity id="leftHand"  laser-controls="hand: left"  raycaster="objects: .clickable; far: 20; lineColor: #e8e2d6; lineOpacity: 0.5"></a-entity>
+      <a-entity id="rightHand" laser-controls="hand: right" raycaster="objects: .clickable; far: 20; lineColor: #e8e2d6; lineOpacity: 0.5"></a-entity>
+    </a-entity>
+
+    <!-- ===== Lighting =====
+         The architecture has its daylight baked into its textures (js/architecture.js),
+         so these two lights only affect frames, plinths, benches and 3D models. -->
+    <a-entity light="type: ambient; intensity: 0.5; color: #f3ecff"></a-entity>
+    <!-- Sun: same direction as the baked sunbeam (MuseumLighting in js/architecture.js) -->
+    <a-entity light="type: directional; intensity: 1.0; color: #ffd9a6" position="-3.69 8.19 4.39"></a-entity>
+
+    <!-- ===== Rotunda: 10 m radius, 6 m walls, coffered dome to ~16 m with an oculus ===== -->
+    <!-- Light pine floor with inlaid border and a compass star; golden-hour light baked in -->
+    <a-circle class="placeable" rotation="-90 0 0" radius="10" segments="96"
+              arch-surface="type: floor; lightmap: floor"></a-circle>
+
+    <!-- Curved wall: 12 bays. Arched openings in every other bay from the benches round to the
+         north lead to the four galleries. The lightmap adds skylight, a lamp wash per bay and the sun. -->
+    <a-entity class="placeable" rotunda-walls="arches: 90, 150, 210, 270"></a-entity>
+
+    <!-- ===== Galleries: barrel-vaulted rooms behind each arch (js/rooms.js) ===== -->
+    <a-entity class="placeable" gallery-room="angle: 90"></a-entity>
+    <a-entity class="placeable" gallery-room="angle: 150"></a-entity>
+    <a-entity class="placeable" gallery-room="angle: 210"></a-entity>
+    <a-entity class="placeable" gallery-room="angle: 270"></a-entity>
+
+    <!-- Fluted pilasters between the bays (12 of them, drawn as 3 instanced meshes) -->
+    <a-entity pilasters="count: 12; radius: 10; height: 6; offset: 15"></a-entity>
+
+    <!-- Cornice: ledge + egg-and-dart frieze where the wall meets the dome -->
+    <a-ring rotation="90 0 0" position="0 6 0" radius-inner="9.4" radius-outer="10.01" segments-theta="96"
+            material="shader: flat; color: #8f8474; side: double"></a-ring>
+    <a-cylinder position="0 6.2 0" radius="9.4" height="0.4" open-ended="true" segments-radial="96"
+                arch-surface="type: frieze; repeat: 120 1; side: back; tint: #b8ab98"></a-cylinder>
+    <a-ring rotation="90 0 0" position="0 6.4 0" radius-inner="9.4" radius-outer="10.01" segments-theta="96"
+            material="shader: flat; color: #ece6dc; side: double"></a-ring>
+
+    <!-- Coffered dome (24 columns of coffers with rosettes), open at the top -->
+    <a-sphere position="0 6.4 0" radius="10" theta-start="20" theta-length="70"
+              segments-width="96" segments-height="28"
+              arch-surface="type: dome; repeat: 24 1; side: back; lightmap: dome"></a-sphere>
+
+    <!-- Oculus: short drum + glass skylight with radial iron mullions -->
+    <a-cylinder position="0 16.1 0" radius="3.43" height="0.6" open-ended="true" segments-radial="64"
+                material="shader: flat; color: #e9e3d8; side: back"></a-cylinder>
+    <a-circle position="0 16.4 0" rotation="90 0 0" radius="3.45" segments="64"
+              arch-surface="type: skylight"></a-circle>
+
+    <!-- Slanted golden sunbeam from the oculus (one faint additive layer; delete if you need more speed) -->
+    <a-entity sun-shaft="opacity: 0.15"></a-entity>
+
+    <!-- ===== Exhibits =====
+         Paintings, the sculpture and the benches are saved items, not hard-coded here, so they can
+         all be moved, edited and deleted in admin mode (?admin). The starter set is defined in
+         js/user-exhibits.js (STARTERS) and added the first time a browser opens the museum. -->
+    <!-- Every exhibit is built in here from saved items (see js/user-exhibits.js) -->
+    <a-entity id="user-exhibits"></a-entity>
+
+  </a-scene>
+</body>
+</html>

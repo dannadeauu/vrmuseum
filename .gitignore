@@ -1,0 +1,6 @@
+# macOS and editor clutter
+.DS_Store
+.claude/
+
+# R session history (not part of the site)
+.Rhistory
