@@ -79,6 +79,7 @@ window.MuseumItems = (() => {
         const data = new Uint8Array(await file.blob.arrayBuffer());
         return lib.getDocument({ data }).promise;
       })());
+      pdfs.get(fileId).catch(() => pdfs.delete(fileId)); // don't remember failures: retry next time
     }
     return pdfs.get(fileId);
   }
@@ -243,11 +244,28 @@ window.MuseumItems = (() => {
   async function buildPdf(r) {
     const el = flatEntity(r);
     const doc = await pdfDoc(srcKey(r));
-    const canvas = document.createElement('canvas');
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
     let pageNum = 1;
     let rendering = Promise.resolve();
+    let shown = null; // texture currently on screen
+
+    // Each page is drawn into its own canvas and only shown once fully rendered, as a
+    // fresh texture. (A texture uploaded while the canvas was still blank keeps that
+    // first size on the GPU, so a later, bigger page can't replace it: it stays black.)
+    const showPage = (canvas) => {
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const apply = () => {
+        const mesh = el.getObject3D('mesh');
+        if (!mesh) return;
+        const old = mesh.material;
+        mesh.material = new THREE.MeshBasicMaterial({ map: tex });
+        if (old && old.dispose) old.dispose();
+        if (shown) shown.dispose();
+        shown = tex;
+      };
+      if (el.hasLoaded) apply(); else el.addEventListener('loaded', apply, { once: true });
+    };
 
     const label = document.createElement('a-entity');
     const render = (n) => {
@@ -255,15 +273,18 @@ window.MuseumItems = (() => {
         const page = await doc.getPage(n);
         const base = page.getViewport({ scale: 1 });
         const vp = page.getViewport({ scale: 1536 / base.width }); // ~1.5k px wide: sharp, still Quest-friendly
-        canvas.width = vp.width;
-        canvas.height = vp.height;
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-        tex.needsUpdate = true;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(vp.width);
+        canvas.height = Math.round(vp.height);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff'; // paper colour behind transparent PDFs
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        showPage(canvas);
         label.setAttribute('text', { value: `${n} / ${doc.numPages}`, align: 'center', color: '#2b2119', width: 1 });
       });
     };
-    render(1);
-    setMap(el, tex);
+    render(1); // the page shows white until the first render is ready
 
     // Page controls under the document (work with the mouse and VR lasers).
     const y = pdfControlsY(r);
