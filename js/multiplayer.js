@@ -271,6 +271,7 @@
   }
 
   function addChatLine(name, colour, text, self = false) {
+    if (!chatLog) return;
     const li = document.createElement('li');
     if (self) li.className = 'self';
     const who = document.createElement('b');
@@ -285,11 +286,51 @@
   }
 
   function systemLine(text) {
+    if (!chatLog) return; // chat not open yet (still choosing a nickname)
     const li = document.createElement('li');
     li.className = 'system';
     li.textContent = text;
     chatLog.appendChild(li);
     chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  // ---------- nickname prompt ----------
+  // Shown when someone enters: pick the name others see above your robot.
+  // Pre-filled with last visit's name, so returning visitors just press Enter.
+  function askNickname(colour) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.id = 'nick-overlay';
+      overlay.innerHTML = `
+        <form id="nick-card" role="dialog" aria-modal="true" aria-labelledby="nick-title">
+          <div class="nick-dot" aria-hidden="true"></div>
+          <h2 id="nick-title">Welcome to the museum</h2>
+          <p>Choose a nickname. It floats above your robot so other visitors know who you are.</p>
+          <input id="nick-input" maxlength="24" autocomplete="nickname" aria-label="Nickname" required>
+          <p class="nick-error" id="nick-error" role="alert"></p>
+          <button type="submit">Enter the museum</button>
+        </form>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector('.nick-dot').style.background = '#' + colour.getHexString();
+      const input = overlay.querySelector('#nick-input');
+      const saved = cleanName(store.get('museum-visitor-name'));
+      input.value = saved;
+      input.placeholder = myName;
+      setTimeout(() => { input.focus(); input.select(); }, 50);
+      overlay.querySelector('#nick-card').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = cleanName(input.value);
+        if (!name) {
+          overlay.querySelector('#nick-error').textContent = 'Please type a nickname (up to 24 characters).';
+          input.focus();
+          return;
+        }
+        myName = name;
+        store.set('museum-visitor-name', myName);
+        overlay.remove();
+        resolve(myName);
+      });
+    });
   }
 
   // ---------- realtime ----------
@@ -305,7 +346,19 @@
     container.name = 'visitors';
     scene.object3D.add(container);
     const myColour = colourFor(myId);
-    buildChat();
+    const announced = new Set(); // visitors whose arrival was already shown
+    const nameChosen = askNickname(myColour);
+    nameChosen.then(() => {
+      buildChat();
+      if (subscribed) { track(); systemLine(`Connected as ${myName}. Press Enter to chat.`); }
+      // Say who's already here (their arrivals happened before the chat opened).
+      const others = Object.entries(channel.presenceState())
+        .filter(([id]) => id !== myId)
+        .map(([id, metas]) => { announced.add(id); return cleanName(metas[0] && metas[0].name) || 'Visitor'; });
+      if (others.length) systemLine(`Here now: ${others.join(', ')}`);
+      if (chatCount) chatCount.textContent = others.length ? `${others.length + 1} people here` : 'Just you';
+    });
+    let subscribed = false;
 
     channel = online.sb.channel('museum-lobby', {
       config: { presence: { key: myId }, broadcast: { self: false } }
@@ -316,11 +369,10 @@
     channel.on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
       const ids = Object.keys(state);
-      chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
+      if (chatCount) chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
       ids.filter((id) => id !== myId).forEach((id) => ensurePeer(id, state[id][0] || {}));
       [...peers.keys()].forEach((id) => { if (!ids.includes(id)) removePeer(id); });
     });
-    const announced = new Set(); // visitors whose arrival was already shown
     // A name change arrives as leave + join for the same visitor: report it as a rename.
     channel.on('presence', { event: 'join' }, ({ key, newPresences }) => {
       if (key === myId || !newPresences[0]) return;
@@ -375,8 +427,12 @@
     };
 
     channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') { track(); systemLine('Connected. Press Enter to chat.'); }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') systemLine('Chat connection problem, retrying…');
+      if (status === 'SUBSCRIBED') {
+        subscribed = true;
+        // Appear to others (presence) only once a nickname is chosen.
+        if (chatLog) { track(); systemLine(`Connected as ${myName}. Press Enter to chat.`); }
+      }
+      if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && chatLog) systemLine('Chat connection problem, retrying…');
     });
 
     startPoseLoop(scene);
@@ -391,7 +447,7 @@
     let last = null, lastAt = 0;
     const r2 = (n) => Math.round(n * 100) / 100;
     setInterval(() => {
-      if (!channel) return;
+      if (!channel || !chatLog) return; // stay invisible to others until a nickname is chosen
       cam.object3D.getWorldPosition(pos);
       cam.object3D.getWorldDirection(fwd).negate(); // the camera entity looks down -z
       const yaw = Math.atan2(fwd.x, fwd.z);

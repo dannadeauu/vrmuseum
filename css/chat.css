@@ -62,3 +62,61 @@
   font: inherit; font-weight: 600; cursor: pointer;
 }
 #chat.collapsed #chat-log, #chat.collapsed #chat-form { display: none; }
+
+/* Nickname prompt shown on entering */
+#nick-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(10, 10, 14, 0.55);
+  backdrop-filter: blur(3px);
+}
+#nick-card {
+  width: 340px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 24px 22px 20px;
+  border-radius: 16px;
+  background: #1b1c22;
+  color: #f2efe9;
+  border: 1px solid rgba(242, 239, 233, 0.16);
+  text-align: center;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+#nick-card h2 {
+  margin: 10px 0 6px;
+  font: 700 24px/1.2 "Playfair Display", Georgia, serif;
+  color: #e8d3a0;
+}
+#nick-card p { margin: 0 0 14px; color: #b9b2a6; }
+.nick-dot { width: 18px; height: 18px; border-radius: 50%; margin: 0 auto; box-shadow: 0 0 0 4px rgba(255,255,255,0.08); }
+#nick-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(242, 239, 233, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2efe9;
+  font: inherit;
+  font-size: 16px; /* 16px stops phones/Quest zooming in on focus */
+  text-align: center;
+}
+#nick-input:focus { outline: none; border-color: #ffb347; }
+#nick-card .nick-error { min-height: 1.2em; margin: 6px 0 8px; color: #f08c7c; font-size: 13px; }
+#nick-card button {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: #ffb347;
+  color: #1b1b1f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
