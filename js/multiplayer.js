@@ -47,20 +47,50 @@
 
   // ---------- the robot ----------
   const shared = {}; // geometries reused by every robot
+
+  // A smooth oval panel lying on a sphere of radius R, facing +z. halfW / halfH are the
+  // oval's half-size in radians around the sphere, so its rim is a clean curve.
+  function ovalPanel(R, halfW, halfH, rings = 12, segs = 48) {
+    const pos = [], uv = [], idx = [];
+    pos.push(0, 0, R); uv.push(0.5, 0.5);
+    for (let r = 1; r <= rings; r++) {
+      const f = r / rings;
+      for (let k = 0; k < segs; k++) {
+        const t = (k / segs) * Math.PI * 2;
+        const az = halfW * f * Math.cos(t), el = halfH * f * Math.sin(t);
+        pos.push(R * Math.sin(az) * Math.cos(el), R * Math.sin(el), R * Math.cos(az) * Math.cos(el));
+        uv.push(0.5 + 0.5 * f * Math.cos(t), 0.5 + 0.5 * f * Math.sin(t));
+      }
+    }
+    const ring = (r, k) => 1 + (r - 1) * segs + (k % segs);
+    for (let k = 0; k < segs; k++) idx.push(0, ring(1, k), ring(1, k + 1));
+    for (let r = 1; r < rings; r++) {
+      for (let k = 0; k < segs; k++) {
+        idx.push(ring(r, k), ring(r + 1, k), ring(r + 1, k + 1), ring(r, k), ring(r + 1, k + 1), ring(r, k + 1));
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
   function geo() {
     if (shared.head) return shared;
-    const ico = (r, d) => new THREE.IcosahedronGeometry(r, d);
-    shared.head = ico(0.17, 1);
-    shared.visor = ico(0.13, 1);
-    shared.eye = new THREE.TorusGeometry(0.03, 0.009, 4, 8, Math.PI);
-    shared.ear = new THREE.CylinderGeometry(0.055, 0.055, 0.06, 8);
-    shared.earHole = new THREE.CylinderGeometry(0.022, 0.022, 0.062, 6);
-    shared.fin = new THREE.BoxGeometry(0.035, 0.11, 0.06);
-    shared.topBump = new THREE.CylinderGeometry(0.05, 0.065, 0.045, 6);
-    shared.body = ico(0.15, 1);
-    shared.badge = new THREE.CircleGeometry(0.055, 5);
-    shared.arm = ico(0.055, 0);
-    shared.hand = ico(0.05, 1);
+    // Smooth, rounded shapes (a few hundred triangles per robot: cheap even with 10 visitors).
+    const ball = (r, w = 28, h = 20) => new THREE.SphereGeometry(r, w, h);
+    shared.head = ball(0.17);
+    shared.visor = ovalPanel(0.17 * 1.02, 0.66, 0.38); // smooth oval face plate on the head's surface
+    shared.eye = new THREE.TorusGeometry(0.03, 0.009, 8, 20, Math.PI);
+    shared.ear = new THREE.CylinderGeometry(0.055, 0.055, 0.06, 24);
+    shared.earHole = new THREE.CylinderGeometry(0.022, 0.022, 0.062, 16);
+    shared.fin = new THREE.CapsuleGeometry(0.018, 0.08, 4, 10);
+    shared.topBump = new THREE.CylinderGeometry(0.05, 0.065, 0.045, 20);
+    shared.body = ball(0.15);
+    shared.badge = new THREE.CircleGeometry(0.055, 28);
+    shared.arm = ball(0.055, 16, 12);
+    shared.hand = ball(0.05, 16, 12);
     return shared;
   }
 
@@ -68,11 +98,15 @@
     const g = geo();
     const shell = new THREE.Color(0xffffff).lerp(colour, 0.38);   // tinted body
     const accent = colour.clone();                                // ears, fins, badge, arms
-    const lam = (c, extra = {}) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, ...extra });
+    // Smooth (per-pixel) shading. Lambert/Phong are among the cheapest lit materials.
+    const lam = (c, extra = {}) => new THREE.MeshLambertMaterial({ color: c, ...extra });
     // A soft self-glow keeps the robots bright and clean whichever way the room light falls.
-    const shellMat = lam(shell, { emissive: shell.clone().multiplyScalar(0.55) });
-    const accentMat = lam(accent, { emissive: accent.clone().multiplyScalar(0.35) });
-    const visorMat = lam(0x0d1f6e, { emissive: 0x1636b8, emissiveIntensity: 0.55 });
+    const shellMat = lam(shell, { emissive: shell.clone().multiplyScalar(0.42) });
+    const accentMat = lam(accent, { emissive: accent.clone().multiplyScalar(0.3) });
+    // Glassy visor: a little shine catches the light like the reference.
+    const visorMat = new THREE.MeshPhongMaterial({
+      color: 0x0d1f6e, emissive: 0x1636b8, emissiveIntensity: 0.5, specular: 0x9fc4ff, shininess: 70
+    });
     const eyeMat = new THREE.MeshBasicMaterial({ color: 0xbff4ff });
     const darkMat = lam(0x1a2233);
 
@@ -86,14 +120,17 @@
     const skull = new THREE.Mesh(g.head, shellMat);
     skull.scale.set(1.18, 0.95, 1.0);
     head.add(skull);
+    // Visor and eyes ride on the skull so they follow its oval shape exactly.
     const visor = new THREE.Mesh(g.visor, visorMat);
-    visor.scale.set(1.12, 0.66, 0.55);
-    visor.position.set(0, -0.005, 0.1);
-    head.add(visor);
+    visor.position.y = -0.006;
+    skull.add(visor);
     [-1, 1].forEach((side) => {
       const eye = new THREE.Mesh(g.eye, eyeMat); // upside-down "U": a happy ^ eye
-      eye.position.set(side * 0.052, 0.0, 0.172);
-      head.add(eye);
+      const az = side * 0.22, el = 0.03, R = 0.17 * 1.045; // just in front of the visor
+      eye.position.set(R * Math.sin(az) * Math.cos(el), R * Math.sin(el) - 0.006, R * Math.cos(az) * Math.cos(el));
+      eye.rotation.y = az; // face outward from the head
+      eye.scale.set(1 / 1.18, 1 / 0.95, 1); // undo the skull's squash so eyes stay round
+      skull.add(eye);
       const ear = new THREE.Mesh(g.ear, accentMat);
       ear.rotation.z = Math.PI / 2;
       ear.position.set(side * 0.195, -0.005, 0);
@@ -103,8 +140,9 @@
       hole.position.set(side * 0.2, -0.005, 0);
       head.add(hole);
       const fin = new THREE.Mesh(g.fin, accentMat);
-      fin.position.set(side * 0.19, 0.08, -0.005);
+      fin.position.set(side * 0.19, 0.085, -0.005);
       fin.rotation.z = side * -0.25;
+      fin.scale.set(1, 1, 1.6);
       head.add(fin);
     });
     const top = new THREE.Mesh(g.topBump, shellMat);
@@ -122,7 +160,7 @@
     bob.add(badge);
     const arms = [-1, 1].map((side) => {
       const arm = new THREE.Mesh(g.arm, accentMat);
-      arm.scale.set(0.85, 1.6, 0.85);
+      arm.scale.set(0.8, 1.55, 0.8);
       arm.position.set(side * 0.17, -0.34, 0.01);
       arm.rotation.z = side * 0.35;
       bob.add(arm);
