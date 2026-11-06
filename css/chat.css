@@ -67,7 +67,7 @@
 #nick-overlay {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 100000; /* above A-Frame's Enter VR button, so the name comes first */
   display: grid;
   place-items: center;
   padding: 16px;

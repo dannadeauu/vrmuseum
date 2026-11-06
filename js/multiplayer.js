@@ -334,6 +334,30 @@
     chatLog.scrollTop = chatLog.scrollHeight;
   }
 
+  // ---------- messages inside VR ----------
+  // Web-page overlays (like the nickname card) can't be seen inside a headset,
+  // so important notices are also shown as a floating label in front of you.
+  let toast = null;
+  function vrToast(text, ms = 6000) {
+    const camEl = document.querySelector('#camera');
+    if (!camEl) return;
+    if (toast) { camEl.object3D.remove(toast); toast.material.map.dispose(); toast.material.dispose(); }
+    toast = labelSprite(text, { fontPx: 38, maxW: 820 });
+    toast.position.set(0, -0.18, -0.9);
+    toast.renderOrder = 999;
+    toast.material.depthTest = false; // always readable, even near walls
+    camEl.object3D.add(toast);
+    const mine = toast;
+    setTimeout(() => {
+      if (toast !== mine) return;
+      camEl.object3D.remove(mine);
+      mine.material.map.dispose();
+      mine.material.dispose();
+      toast = null;
+    }, ms);
+  }
+  const inVR = () => document.querySelector('a-scene').is('vr-mode');
+
   // ---------- nickname prompt ----------
   // Shown when someone enters: pick the name others see above your robot.
   // Pre-filled with last visit's name, so returning visitors just press Enter.
@@ -357,6 +381,23 @@
       input.value = saved;
       input.placeholder = myName;
       setTimeout(() => { input.focus(); input.select(); }, 50);
+      const scene = document.querySelector('a-scene');
+      const finish = (name) => {
+        myName = name;
+        store.set('museum-visitor-name', myName);
+        overlay.remove();
+        scene.removeEventListener('enter-vr', onEnterVR);
+        resolve(myName);
+      };
+      // Went into VR without answering (the card can't be seen in a headset):
+      // join with what was typed, the saved name, or a generated one.
+      const onEnterVR = () => {
+        const name = cleanName(input.value) || myName;
+        finish(name);
+        setTimeout(() => vrToast(`You're "${name}" here. To change it, take off the headset and edit the name in the chat panel.`, 8000), 600);
+      };
+      scene.addEventListener('enter-vr', onEnterVR);
+      if (inVR()) onEnterVR();
       overlay.querySelector('#nick-card').addEventListener('submit', (e) => {
         e.preventDefault();
         const name = cleanName(input.value);
@@ -365,10 +406,7 @@
           input.focus();
           return;
         }
-        myName = name;
-        store.set('museum-visitor-name', myName);
-        overlay.remove();
-        resolve(myName);
+        finish(name);
       });
     });
   }
@@ -497,12 +535,18 @@
           </div>`;
         document.body.appendChild(overlay);
         overlay.querySelector('.nick-dot').style.background = '#' + myColour.getHexString();
+        const scene = document.querySelector('a-scene');
+        const vrNote = () => vrToast(`The museum is full (${MAX_VISITORS} visitors). You'll join automatically when someone leaves.`, 10000);
+        scene.addEventListener('enter-vr', vrNote);
+        if (inVR()) vrNote();
         const check = () => {
           const n = othersInside();
           overlay.querySelector('#full-count').textContent = `${Math.min(n, MAX_VISITORS)} of ${MAX_VISITORS} visitors are inside right now.`;
           if (n < MAX_VISITORS) {
             syncWaiters.splice(syncWaiters.indexOf(check), 1);
+            scene.removeEventListener('enter-vr', vrNote);
             overlay.remove();
+            if (inVR()) vrToast("A place opened up: you're in the museum now.", 5000);
             resolve();
           }
         };

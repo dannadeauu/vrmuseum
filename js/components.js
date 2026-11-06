@@ -2,21 +2,26 @@
 
 /**
  * thumbstick-locomotion — put on the rig.
- * Left stick: smooth move in the direction you're looking.
- * Right stick: snap turn (comfortable for most people in VR).
+ * Left stick: glide in the direction you're looking, easing in and out (no lurches).
+ * Right stick: smooth turning (or snap turns with turn: snap).
  */
 AFRAME.registerComponent('thumbstick-locomotion', {
   schema: {
     leftHand: { type: 'selector' },
     rightHand: { type: 'selector' },
-    speed: { default: 2 },        // metres per second
-    snapAngle: { default: 45 },   // degrees
-    deadzone: { default: 0.2 }
+    speed: { default: 2 },          // metres per second at full stick
+    turn: { default: 'smooth' },    // smooth | snap
+    turnSpeed: { default: 90 },     // degrees per second at full stick (smooth)
+    snapAngle: { default: 45 },     // degrees per flick (snap)
+    deadzone: { default: 0.15 },
+    easing: { default: 8 }          // how quickly speed follows the stick (higher = snappier)
   },
 
   init() {
     this.stick = { x: 0, y: 0 };
+    this.turnX = 0;
     this.turnReady = true;
+    this.vel = new THREE.Vector2(); // current ground velocity (x, z)
     this.camera = this.el.querySelector('[camera]');
     this.fwd = new THREE.Vector3();
     this.before = new THREE.Vector3();
@@ -24,11 +29,12 @@ AFRAME.registerComponent('thumbstick-locomotion', {
 
     this.onMove = (e) => { this.stick.x = e.detail.x; this.stick.y = e.detail.y; };
     this.onTurn = (e) => {
-      const x = e.detail.x;
-      if (Math.abs(x) < 0.5) { this.turnReady = true; return; }
+      this.turnX = e.detail.x;
+      if (this.data.turn !== 'snap') return;
+      if (Math.abs(e.detail.x) < 0.5) { this.turnReady = true; return; }
       if (!this.turnReady) return;
       this.turnReady = false;
-      this.snapTurn(x > 0 ? -1 : 1);
+      this.rotateAroundHead(THREE.MathUtils.degToRad(this.data.snapAngle) * (e.detail.x > 0 ? -1 : 1));
     };
   },
 
@@ -42,11 +48,11 @@ AFRAME.registerComponent('thumbstick-locomotion', {
     this.data.rightHand && this.data.rightHand.removeEventListener('thumbstickmoved', this.onTurn);
   },
 
-  // Rotate the rig around the player's head, not the rig origin.
-  snapTurn(dir) {
+  // Rotate the rig around the player's head (not the rig origin), so turning doesn't slide you.
+  rotateAroundHead(angle) {
     const rig = this.el.object3D;
     this.camera.object3D.getWorldPosition(this.before);
-    rig.rotation.y += THREE.MathUtils.degToRad(this.data.snapAngle) * dir;
+    rig.rotation.y += angle;
     rig.updateMatrixWorld(true);
     this.camera.object3D.getWorldPosition(this.after);
     rig.position.x += this.before.x - this.after.x;
@@ -54,20 +60,41 @@ AFRAME.registerComponent('thumbstick-locomotion', {
   },
 
   tick(t, dt) {
+    if (!dt) return;
+    const d = this.data;
+    const s = Math.min(dt, 50) / 1000; // clamp so a hitch doesn't teleport you
+
+    // Smooth turning, with a soft response curve for fine control.
+    if (d.turn !== 'snap' && Math.abs(this.turnX) > d.deadzone) {
+      const amt = (Math.abs(this.turnX) - d.deadzone) / (1 - d.deadzone);
+      this.rotateAroundHead(-Math.sign(this.turnX) * amt * amt * THREE.MathUtils.degToRad(d.turnSpeed) * s);
+    }
+
+    // Target velocity from the left stick, relative to where you're looking.
+    let tx = 0, tz = 0;
     const { x, y } = this.stick;
-    if (Math.hypot(x, y) < this.data.deadzone || !dt) return;
+    const mag = Math.hypot(x, y);
+    if (mag > d.deadzone) {
+      this.camera.object3D.getWorldDirection(this.fwd).negate(); // camera entity faces -z
+      this.fwd.y = 0;
+      if (this.fwd.lengthSq() > 1e-6) {
+        this.fwd.normalize();
+        const k = Math.min(1, (mag - d.deadzone) / (1 - d.deadzone)) / mag; // rescale past the deadzone
+        const sx = x * k, sy = y * k;
+        const rightX = -this.fwd.z, rightZ = this.fwd.x;
+        tx = (this.fwd.x * -sy + rightX * sx) * d.speed;
+        tz = (this.fwd.z * -sy + rightZ * sx) * d.speed;
+      }
+    }
 
-    // Camera entity's object3D faces -Z, so flip getWorldDirection.
-    this.camera.object3D.getWorldDirection(this.fwd).negate();
-    this.fwd.y = 0;
-    if (this.fwd.lengthSq() < 1e-6) return;
-    this.fwd.normalize();
-
-    const step = this.data.speed * (dt / 1000);
-    const rightX = -this.fwd.z, rightZ = this.fwd.x;
+    // Ease the actual velocity toward the target: smooth starts and stops.
+    const e = 1 - Math.exp(-d.easing * s);
+    this.vel.x += (tx - this.vel.x) * e;
+    this.vel.y += (tz - this.vel.y) * e;
+    if (Math.abs(this.vel.x) < 1e-4 && Math.abs(this.vel.y) < 1e-4) return;
     const pos = this.el.object3D.position;
-    pos.x += (this.fwd.x * -y + rightX * x) * step;
-    pos.z += (this.fwd.z * -y + rightZ * x) * step;
+    pos.x += this.vel.x * s;
+    pos.z += this.vel.y * s;
   }
 });
 
@@ -267,31 +294,41 @@ AFRAME.registerComponent('slow-spin', {
 });
 
 /**
- * jump — put on the rig. Spacebar makes the player hop (PC only; in VR the
- * floor stays put, since sudden vertical motion is a common cause of motion sickness).
+ * jump — put on the rig. Spacebar on PC, the A button on a VR controller.
  */
 AFRAME.registerComponent('jump', {
   schema: {
-    height: { default: 1 },     // peak height in metres
-    gravity: { default: 20 }    // m/s²; higher = snappier jump
+    height: { default: 1 },              // peak height in metres
+    gravity: { default: 20 },            // m/s²; higher = snappier jump
+    hand: { type: 'selector' },          // controller with the jump button (e.g. #rightHand)
+    button: { default: 'abuttondown' }   // A button on Meta Quest controllers
   },
 
   init() {
     this.vy = 0;
     this.airborne = false;
+    this.jump = () => {
+      if (this.airborne) return;
+      this.vy = Math.sqrt(2 * this.data.gravity * this.data.height);
+      this.airborne = true;
+    };
     this.onKey = (e) => {
       if (e.code !== 'Space' || e.repeat) return;
       const t = e.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault(); // stop the page from scrolling
-      if (this.airborne || this.el.sceneEl.is('vr-mode')) return;
-      this.vy = Math.sqrt(2 * this.data.gravity * this.data.height);
-      this.airborne = true;
+      this.jump();
     };
   },
 
-  play() { window.addEventListener('keydown', this.onKey); },
-  pause() { window.removeEventListener('keydown', this.onKey); },
+  play() {
+    window.addEventListener('keydown', this.onKey);
+    if (this.data.hand) this.data.hand.addEventListener(this.data.button, this.jump);
+  },
+  pause() {
+    window.removeEventListener('keydown', this.onKey);
+    if (this.data.hand) this.data.hand.removeEventListener(this.data.button, this.jump);
+  },
 
   tick(t, dt) {
     if (!this.airborne || !dt) return;

@@ -47,9 +47,9 @@
          rig moves in VR (thumbsticks); camera moves on desktop (WASD).
          bounds keeps either one inside the rotunda, the passages and the galleries. -->
     <a-entity id="rig" position="0 0 7"
-              thumbstick-locomotion="leftHand: #leftHand; rightHand: #rightHand; speed: 2; snapAngle: 45"
+              thumbstick-locomotion="leftHand: #leftHand; rightHand: #rightHand; speed: 2; turn: smooth; turnSpeed: 90"
               bounds="layout: true"
-              jump="height: 1; gravity: 20"
+              jump="height: 1; gravity: 20; hand: #rightHand"
               spawn-facing="target: starter-sign; distance: 7">
       <a-entity id="camera" camera="near: 0.05; far: 150" position="0 1.6 0"
                 look-controls="pointerLockEnabled: false"
