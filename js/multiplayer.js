@@ -194,6 +194,7 @@
     head.add(skull);
     // Visor and eyes ride on the skull so they follow its oval shape exactly.
     const visor = new THREE.Mesh(g.visor, visorMat);
+    visor.name = 'visor'; // (names let the avatar station preview just this part)
     visor.position.y = -0.006;
     skull.add(visor);
     const eyesStyle = look ? look.eyes : 'happy';
@@ -201,6 +202,7 @@
       // Eyes: happy = ^ ^, open = round glowing dots, wink = one dot and one ^.
       const open = eyesStyle === 'open' || (eyesStyle === 'wink' && side < 0);
       const eye = new THREE.Mesh(open ? g.eyeDot : g.eye, eyeMat);
+      eye.name = 'eye';
       const az = side * 0.22, el = 0.03, R = 0.17 * 1.045; // just in front of the visor
       eye.position.set(R * Math.sin(az) * Math.cos(el), R * Math.sin(el) - 0.006, R * Math.cos(az) * Math.cos(el));
       eye.rotation.y = az; // face outward from the head
@@ -229,6 +231,7 @@
       const felt = lam(0xb7773f, { emissive: 0x3a2410, side: THREE.DoubleSide }); // leather brown
       const bandMat = lam(0x5a3a20, { side: THREE.DoubleSide });
       const hatGroup = new THREE.Group();
+      hatGroup.name = 'hat';
       hatGroup.position.set(0, 0.165, -0.005);
       hatGroup.rotation.x = -0.12; // tipped back a little
       const brim = new THREE.Mesh(g.brim, felt);
@@ -254,6 +257,7 @@
       const white = lam(0xf2f3f5, { emissive: 0x3a3b40 });
       const black = new THREE.MeshPhongMaterial({ color: 0x15171c, specular: 0x7a8aa0, shininess: 60 });
       const set = new THREE.Group();
+      set.name = 'hat';
       set.position.set(0, 0.13, 0.05);
       set.rotation.x = -0.55; // pushed up onto the forehead, so the eyes still show
       const goggles = new THREE.Mesh(g.goggles, white);
@@ -268,6 +272,7 @@
       });
       head.add(set);
       const strap = new THREE.Mesh(g.strap, lam(0x2a2d34));
+      strap.name = 'hatStrap'; // part of the headset, but left out of the station preview
       strap.rotation.x = Math.PI / 2 - 0.5;
       strap.scale.set(1.2, 1.02, 1);
       strap.position.set(0, 0.1, -0.005);

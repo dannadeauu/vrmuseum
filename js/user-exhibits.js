@@ -591,8 +591,8 @@ window.MuseumItems = (() => {
     return { el, set };
   }
 
-  // A small turning 3D preview of your own head: wearing your hat ('hat'), or bare to
-  // show your eyes ('eyes'). Rebuilt whenever you change your look.
+  // A small turning 3D preview of just the part being chosen: your hat on its own ('hat'),
+  // or your visor and eyes ('eyes'). Rebuilt whenever you change your look.
   AFRAME.registerComponent('look-preview', {
     schema: { part: { default: 'hat' } },
     init() {
@@ -600,12 +600,31 @@ window.MuseumItems = (() => {
         const A = window.MuseumAvatar;
         if (!A) return;
         const look = A.look;
-        const robot = A.makeRobot(this.data.part === 'eyes' ? { ...look, hat: 'none' } : look);
-        const head = robot.head;
-        head.parent.remove(head);
-        head.position.set(0, this.data.part === 'hat' ? -0.04 : 0, 0);
+        const robot = A.makeRobot(look);
+        const frame = new THREE.Group(); // stands in for the head, so parts keep their shape
+        if (this.data.part === 'eyes') {
+          const skull = robot.head.children.find((o) => o.isMesh && o.getObjectByName('visor'));
+          frame.scale.copy(skull.scale); // the face plate follows the head's oval shape
+          skull.children.filter((o) => o.name === 'visor' || o.name === 'eye').forEach((o) => frame.add(o));
+        } else if (look.hat === 'none') {
+          // "No hat": a small grey crossed-out circle.
+          const grey = new THREE.MeshBasicMaterial({ color: 0xb9b2a6 });
+          frame.add(new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.009, 8, 40), grey));
+          const bar = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.016, 0.016), grey);
+          bar.rotation.z = Math.PI / 4;
+          frame.add(bar);
+        } else {
+          robot.head.children.filter((o) => o.name === 'hat').forEach((o) => {
+            o.rotation.x = look.hat === 'headset' ? 0.15 : o.rotation.x; // headset: show the goggles face-on
+            frame.add(o);
+          });
+        }
+        // Centre whatever was picked on this spot.
         const holder = new THREE.Group();
-        holder.add(head);
+        holder.add(frame);
+        holder.updateMatrixWorld(true);
+        const c = new THREE.Box3().setFromObject(frame).getCenter(new THREE.Vector3());
+        frame.position.sub(c);
         this.el.setObject3D('mesh', holder);
       };
       this.build();
@@ -614,7 +633,7 @@ window.MuseumItems = (() => {
     tick(t) {
       const m = this.el.getObject3D('mesh');
       if (!m) return;
-      // Hats turn all the way round; the face sways gently so the eyes stay in view.
+      // Hats turn all the way round; the eyes sway gently so they stay facing you.
       m.rotation.y = this.data.part === 'hat' ? t / 2200 : Math.sin(t / 1800) * 0.35;
     },
     remove() { if (this.off) this.off(); }
@@ -733,7 +752,7 @@ window.MuseumItems = (() => {
     const selector = (x, list, key, part, labels) => {
       const preview = document.createElement('a-entity');
       preview.setAttribute('position', `${x} ${PY + 0.06} 0`);
-      preview.setAttribute('scale', '0.8 0.8 0.8');
+      preview.setAttribute('scale', part === 'eyes' ? '1.5 1.5 1.5' : '1.1 1.1 1.1');
       preview.setAttribute('look-preview', { part });
       el.appendChild(preview);
       const label = pillLabel('', x, PY - 0.3);
