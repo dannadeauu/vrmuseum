@@ -47,10 +47,12 @@ With Supabase set up, everyone sees the same museum, and admin changes show up l
 1. **Authentication → Users → Add user → Create new user.** Enter your email and a password, and tick *Auto Confirm User*. This is your admin login.
 2. *(Recommended)* **Authentication → Sign In / Providers:** turn off *Allow new users to sign up*.
 3. **SQL Editor → New query:** paste all of `supabase/setup.sql` and click **Run**.
-4. Open the museum with `?admin` **in the browser where you built your layout**. Log in and click **Publish this browser's layout**.
+4. Open the museum with `?admin`, click **Admin** and log in. That's it: there's no publishing. Everything you add, move, edit or delete saves automatically and appears for every visitor right away ("Saved: live for everyone").
 
 **After that:**
-- Visitors don't need `?admin` or an account. They just see the published museum.
+- Visitors don't need `?admin` or an account. They see the shared museum, and changes appear live.
+- **Backups:** **Export layout** downloads the whole museum (exhibits plus uploaded files) as one file, and **Import layout** restores it. Importing always downloads a backup of the current museum first.
+- If the online museum can't be reached, editing pauses (nothing is saved only in one browser).
 - To add another admin, create the user (step 1), then run `supabase/setup.sql` again.
 - If Supabase can't be reached, the museum falls back to the copy saved in the visitor's browser (or the starter exhibits), so it never shows an empty room.
 - Never put the **service_role / secret key** or your database password in these files.

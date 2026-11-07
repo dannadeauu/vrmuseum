@@ -692,6 +692,15 @@ window.MuseumItems = (() => {
     await MuseumStore.local.setMeta('layout', LAYOUT_VERSION);
   }
 
+  // An admin opened an empty online museum: save the starters there (once).
+  async function seedOnline() {
+    if (MuseumStore.mode !== 'online') return;
+    if ((await MuseumStore.allItems()).length) { await MuseumStore.setMeta('seeded', true); return; }
+    for (const r of STARTERS) await MuseumStore.putItem(JSON.parse(JSON.stringify(r)));
+    await MuseumStore.setMeta('seeded', true);
+    await MuseumStore.setMeta('layout', LAYOUT_VERSION);
+  }
+
   // Re-add starter pieces that were deleted; returns how many came back.
   async function restoreStarters() {
     const have = new Set((await MuseumStore.allItems()).map((r) => r.id));
@@ -766,7 +775,7 @@ window.MuseumItems = (() => {
 
   return {
     build, find, discard, clearScene, loadAll, restoreStarters, inspect, kindOf, forgetFile, floorCenterY,
-    signAspect, SIGN_STYLES, LAYOUT_VERSION, prepareLocal: ensureStarters, inspectLink,
+    signAspect, SIGN_STYLES, LAYOUT_VERSION, prepareLocal: ensureStarters, inspectLink, seedOnline,
     FLAT_KINDS, FLOOR_KINDS, PLINTH_H
   };
 })();

@@ -65,7 +65,6 @@
       <div id="admin-account" hidden>
         <p class="admin-hint" id="admin-who"></p>
         <div class="admin-row">
-          <button type="button" class="admin-btn" data-act="publish" id="admin-publish">Publish this browser's layout</button>
           <button type="button" class="admin-btn" data-act="logout">Log out</button>
         </div>
       </div>
@@ -135,7 +134,6 @@
       if (act === 'deselect') select(null);
       if (act === 'export') exportLayout();
       if (act === 'add-sign') addSign();
-      if (act === 'publish') publishLocal();
       if (act === 'logout') logOut();
       if (act === 'restore') restoreStarters();
       // Give the keyboard back to the scene so WASD/space work right away.
@@ -175,6 +173,8 @@
     }
   }
 
+  const savedNote = () => (MuseumStore.mode === 'online' ? 'Saved: live for everyone.' : 'Saved in this browser.');
+
   // ---------------- online access (Supabase) ----------------
   // Online, only logged-in museum admins get the editing tools, and every change goes
   // live for all visitors. Offline (Supabase not set up / unreachable) it works as before,
@@ -195,16 +195,31 @@
         status(`You're logged in, but ${who} isn't a museum admin yet. In Supabase's SQL Editor, run supabase/setup.sql again (it gives every existing user admin rights), then reload this page.`);
       }
       else if (canEdit && !published) {
-        status('Nothing is published yet, so visitors see the starter exhibits. Click "Publish this browser\'s layout" to put your museum online.');
+        // Empty online museum: save the starter exhibits so editing works straight away.
+        status('Setting up the online museum…');
+        try {
+          await MuseumItems.seedOnline();
+          published = true;
+          status('The online museum was empty, so the starter exhibits were saved. Everything you change now saves automatically for everyone.');
+        } catch (err) {
+          status(`Couldn't set up the online museum: ${err.message}`);
+        }
       }
     }
+    // Supabase is set up but can't be reached: pause editing, so nothing gets saved only in
+    // this browser (where nobody else would see it).
+    const configured = !!(window.MUSEUM_SUPABASE && window.MUSEUM_SUPABASE.url && window.MUSEUM_SUPABASE.key);
+    if (!online && configured) {
+      canEdit = false;
+      status("Can't reach the online museum right now, so editing is paused (changes couldn't be shared). Check your connection and reload.");
+    }
     $('#admin-mode-note').textContent = online
-      ? 'Online: your changes go live for every visitor.'
+      ? 'Every change saves automatically and appears for all visitors right away.'
+      : configured ? 'Offline: editing paused.'
       : 'Offline: Supabase is not set up or not reachable, so changes are saved in this browser only.';
     $('#admin-login').hidden = !online || !!who;
     $('#admin-account').hidden = !online || !who;
     $('#admin-who').textContent = who ? `Signed in as ${who}` : '';
-    $('#admin-publish').hidden = !canEdit;
     const tools = canEdit && published;
     $('#admin-tools').hidden = !tools;
     if (adminOn && tools) scene.addState('admin-mode'); else scene.removeState('admin-mode');
@@ -240,47 +255,6 @@
     const online = MuseumStore.online();
     if (online) await online.signOut();
     status('Logged out.');
-    refreshAccess();
-  }
-
-  // Upload everything saved in THIS browser (the layout you built before going online)
-  // and make it the museum everyone sees. Items online that aren't in this browser are removed.
-  async function publishLocal() {
-    const online = MuseumStore.online();
-    if (!online || !canEdit) return;
-    if (!confirm('Replace the online museum with the layout saved in this browser? Everyone will see it right away.')) return;
-    cancelPlacing();
-    select(null);
-    try {
-      status('Preparing…');
-      await MuseumItems.prepareLocal();
-      const L = MuseumStore.local;
-      const items = await L.allItems();
-      const files = await L.allFiles();
-      const needed = new Set(items.map((r) => r.fileId).filter(Boolean));
-      const remoteFiles = new Set(await online.fileNames());
-      const remoteItems = (await online.allItems()).map((r) => r.id);
-      const uploads = files.filter((f) => needed.has(f.id) && !remoteFiles.has(f.id));
-      for (let i = 0; i < uploads.length; i++) {
-        status(`Uploading files ${i + 1} of ${uploads.length}…`);
-        await online.putFile(uploads[i]);
-      }
-      for (let i = 0; i < items.length; i++) {
-        status(`Publishing exhibits ${i + 1} of ${items.length}…`);
-        await online.putItem(items[i]);
-      }
-      const keep = new Set(items.map((r) => r.id));
-      for (const id of remoteItems) if (!keep.has(id)) await online.deleteItem(id);
-      const orphans = [...remoteFiles].filter((id) => !needed.has(id));
-      if (orphans.length) await online.sb.storage.from('museum-files').remove(orphans);
-      await online.setMeta('seeded', true);
-      await online.setMeta('layout', MuseumItems.LAYOUT_VERSION);
-      MuseumItems.clearScene();
-      await MuseumItems.loadAll();
-      status(`Published ${items.length} exhibits${uploads.length ? ` and ${uploads.length} files` : ''}. Everyone now sees this layout.`);
-    } catch (err) {
-      status(`Publishing stopped: ${err.message}`);
-    }
     refreshAccess();
   }
 
@@ -492,7 +466,7 @@
     status('Saving…');
     await MuseumStore.putItem(rec);
     await MuseumItems.build(rec);
-    status(`Placed "${rec.title}".`);
+    status(`Placed "${rec.title}". ${savedNote()}`);
     select(rec);
   }
 
@@ -561,7 +535,13 @@
     const rec = selected;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      await MuseumStore.putItem(rec);
+      try {
+        await MuseumStore.putItem(rec);
+        status(savedNote());
+      } catch (err) {
+        status(`Couldn't save: ${err.message}. Check you're still logged in.`);
+        return;
+      }
       await MuseumItems.build(rec);
     }, 250);
   }
@@ -582,7 +562,7 @@
       await MuseumStore.deleteFile(rec.fileId);
       MuseumItems.forgetFile(rec.fileId);
     }
-    status(`Deleted "${rec.title}".`);
+    status(`Deleted "${rec.title}". ${savedNote()}`);
   }
 
   // Outline the selected item every frame (it may be rebuilt while editing).
@@ -624,7 +604,7 @@
     r.readAsDataURL(blob);
   });
 
-  async function exportLayout() {
+  async function exportLayout(name = 'museum-layout') {
     status('Preparing export…');
     const items = await MuseumStore.allItems();
     const files = await MuseumStore.allFiles();
@@ -640,7 +620,7 @@
     const url = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'museum-layout.json';
+    a.download = `${name}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     status(`Exported ${items.length} item${items.length === 1 ? '' : 's'}.`);
@@ -661,7 +641,10 @@
       status("That file isn't a museum layout export.");
       return;
     }
-    if (!confirm(`Replace everything you've added in this browser with the ${data.items.length} item(s) from "${file.name}"?`)) return;
+    const where = MuseumStore.mode === 'online' ? 'the ONLINE museum (everyone will see it)' : 'this browser';
+    if (!confirm(`Replace everything in ${where} with the ${data.items.length} item(s) from "${file.name}"?` +
+      (MuseumStore.mode === 'online' ? '\n\nA backup of the online museum downloads first.' : ''))) return;
+    if (MuseumStore.mode === 'online') await exportLayout('museum-backup-before-import');
 
     status('Importing…');
     await cancelPlacing();

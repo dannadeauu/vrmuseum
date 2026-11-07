@@ -101,10 +101,10 @@ function makeSupabaseStore({ url, key }) {
       return rows[0] ? rows[0].value : undefined;
     },
     async setMeta(key, value) { check(await sb.from('museum_meta').upsert({ key, value })); },
+    // Removes all exhibits. Uploaded files are kept on purpose, so a backup can always be
+    // restored (unused files can be tidied up later in Supabase -> Storage).
     async clearAll() {
       check(await sb.from('museum_items').delete().neq('id', ''));
-      const names = await store.fileNames();
-      if (names.length) check(await sb.storage.from(BUCKET).remove(names));
     },
     // Live updates: every insert/update/delete on museum_items, for every visitor.
     subscribe(cb) {

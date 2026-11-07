@@ -12,7 +12,9 @@
  *   doc: a pdf.js document; onPage(n): called with the page you were on when closing.
  */
 window.PdfReader = (() => {
-  let state = null; // { doc, page, onPage, ... } while open
+  let state = null; // { doc, page, zoom, onPage, ... } while open
+  const ZOOMS = [1, 1.25, 1.5, 2, 2.5, 3, 4]; // 1 = whole page fits the reader
+  const VR_ZOOMS = [0.8, 1, 1.25, 1.5, 2];
 
   // ---------------------------------------------------------------- PC / phone
   let dom;
@@ -33,9 +35,16 @@ window.PdfReader = (() => {
         <p class="pr-desc" id="pr-desc"></p>
         <div class="pr-stage"><canvas id="pr-canvas" aria-label="PDF page"></canvas><div class="pr-loading">Loading page…</div></div>
         <footer>
-          <button type="button" class="pr-prev" aria-label="Previous page">‹</button>
-          <span id="pr-count"></span>
-          <button type="button" class="pr-next" aria-label="Next page">›</button>
+          <div class="pr-pages">
+            <button type="button" class="pr-prev" aria-label="Previous page">‹</button>
+            <span id="pr-count"></span>
+            <button type="button" class="pr-next" aria-label="Next page">›</button>
+          </div>
+          <div class="pr-zoom" role="group" aria-label="Zoom">
+            <button type="button" class="pr-zoom-out" aria-label="Zoom out">−</button>
+            <button type="button" class="pr-zoom-fit" aria-label="Fit page">Fit</button>
+            <button type="button" class="pr-zoom-in" aria-label="Zoom in">+</button>
+          </div>
         </footer>
       </div>`;
     document.body.appendChild(root);
@@ -43,11 +52,25 @@ window.PdfReader = (() => {
     root.querySelector('.pr-close').addEventListener('click', close);
     root.querySelector('.pr-prev').addEventListener('click', () => go(-1));
     root.querySelector('.pr-next').addEventListener('click', () => go(1));
+    root.querySelector('.pr-zoom-in').addEventListener('click', () => zoom(1));
+    root.querySelector('.pr-zoom-out').addEventListener('click', () => zoom(-1));
+    root.querySelector('.pr-zoom-fit').addEventListener('click', () => zoom(0));
+    const stage = root.querySelector('.pr-stage');
+    // Ctrl/Cmd + scroll wheel, or a trackpad pinch (browsers send it as Ctrl + wheel).
+    stage.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoom(e.deltaY < 0 ? 1 : -1);
+    }, { passive: false });
+    stage.addEventListener('dblclick', () => zoom(state && state.zoom > 1 ? 0 : 3)); // double-click: 2x / fit
     window.addEventListener('keydown', (e) => {
       if (!state || state.vr) return;
       if (e.key === 'Escape') { close(); e.preventDefault(); }
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { go(1); e.preventDefault(); }
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') { go(-1); e.preventDefault(); }
+      if (e.key === '+' || e.key === '=') { zoom(1); e.preventDefault(); }
+      if (e.key === '-' || e.key === '_') { zoom(-1); e.preventDefault(); }
+      if (e.key === '0') { zoom(0); e.preventDefault(); }
     });
     let t;
     window.addEventListener('resize', () => {
@@ -78,15 +101,27 @@ window.PdfReader = (() => {
     root.querySelector('#pr-count').textContent = `Page ${page} of ${doc.numPages}`;
     root.querySelector('.pr-prev').disabled = page <= 1;
     root.querySelector('.pr-next').disabled = page >= doc.numPages;
+    root.querySelector('.pr-zoom-fit').textContent = state.zoom === 1 ? 'Fit' : `${Math.round(state.zoom * 100)}%`;
+    root.querySelector('.pr-zoom-out').disabled = state.zoom <= ZOOMS[0];
+    root.querySelector('.pr-zoom-in').disabled = state.zoom >= ZOOMS[ZOOMS.length - 1];
     const stage = root.querySelector('.pr-stage');
+    // Remember which part of the page is in the middle, to keep it there after zooming.
+    const cx = stage.scrollWidth > stage.clientWidth ? (stage.scrollLeft + stage.clientWidth / 2) / stage.scrollWidth : 0.5;
+    const cy = stage.scrollHeight > stage.clientHeight ? (stage.scrollTop + stage.clientHeight / 2) / stage.scrollHeight : 0.5;
     const loading = root.querySelector('.pr-loading');
     loading.hidden = false;
     const p = await doc.getPage(page);
     if (token !== renderToken) return;
     const base = p.getViewport({ scale: 1 });
-    const fit = Math.min(stage.clientWidth / base.width, stage.clientHeight / base.height);
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const vp = p.getViewport({ scale: fit * dpr });
+    const pad = 24; // stage padding
+    const fit = Math.min((stage.clientWidth - pad) / base.width, (stage.clientHeight - pad) / base.height);
+    const cssScale = fit * state.zoom;
+    // Sharp on high-DPI screens, but cap the canvas size (big zooms can get huge).
+    let dpr = Math.min(2, window.devicePixelRatio || 1);
+    const maxPixels = 16e6;
+    const px = base.width * base.height * cssScale * cssScale * dpr * dpr;
+    if (px > maxPixels) dpr *= Math.sqrt(maxPixels / px);
+    const vp = p.getViewport({ scale: cssScale * dpr });
     const off = document.createElement('canvas'); // draw off-screen, then swap in: no flicker
     off.width = Math.round(vp.width);
     off.height = Math.round(vp.height);
@@ -102,6 +137,13 @@ window.PdfReader = (() => {
     canvas.style.height = `${Math.round(off.height / dpr)}px`;
     canvas.getContext('2d').drawImage(off, 0, 0);
     loading.hidden = true;
+    if (state.keepView) {
+      stage.scrollLeft = cx * stage.scrollWidth - stage.clientWidth / 2;
+      stage.scrollTop = cy * stage.scrollHeight - stage.clientHeight / 2;
+    } else {
+      stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+      stage.scrollTop = 0; // new page: start at the top
+    }
   }
 
   // ---------------------------------------------------------------- VR
@@ -155,16 +197,24 @@ window.PdfReader = (() => {
 
     const count = document.createElement('a-entity');
     count.setAttribute('position', '0 -0.6 0.01');
+    count.setAttribute('scale', '0.8 0.8 0.8');
     el.appendChild(count);
 
-    el.appendChild(makeButton('<  Prev', -0.34, -0.6, 0.26, () => go(-1)));
-    el.appendChild(makeButton('Next  >', 0.34, -0.6, 0.26, () => go(1)));
+    el.appendChild(makeButton('<  Prev', -0.22, -0.6, 0.22, () => go(-1)));
+    el.appendChild(makeButton('Next  >', 0.22, -0.6, 0.22, () => go(1)));
+    el.appendChild(makeButton('-', -0.48, -0.6, 0.1, () => zoom(-1)));
+    el.appendChild(makeButton('+', 0.48, -0.6, 0.1, () => zoom(1)));
+    const zl = document.createElement('a-entity');
+    zl.setAttribute('position', '-0.48 -0.68 0.01');
+    zl.setAttribute('text', { value: '100%', align: 'center', color: '#b9b2a6', width: 0.6 });
+    el.appendChild(zl);
     el.appendChild(makeButton('Close  x', 0.46, 0.635, 0.2, close));
 
     scene.appendChild(el);
     vrEl = el;
     vrEl._page = page;
     vrEl._count = count;
+    vrEl._zoomLabel = zl;
 
     // B button closes the reader.
     const right = document.querySelector('#rightHand');
@@ -178,7 +228,8 @@ window.PdfReader = (() => {
     const p = await doc.getPage(page);
     if (token !== renderToken || !vrEl) return;
     const base = p.getViewport({ scale: 1 });
-    const vp = p.getViewport({ scale: 1400 / base.width }); // sharp enough to read in a headset
+    const px = 1400 * Math.min(2, Math.max(1, state.zoom)); // sharper when the panel is bigger
+    const vp = p.getViewport({ scale: px / base.width });
     const c = document.createElement('canvas');
     c.width = Math.round(vp.width);
     c.height = Math.round(vp.height);
@@ -211,13 +262,36 @@ window.PdfReader = (() => {
     const next = Math.min(state.doc.numPages, Math.max(1, state.page + dir));
     if (next === state.page) return;
     state.page = next;
+    state.keepView = false;
     if (state.vr) renderVr(); else renderDom();
+  }
+
+  // dir: +1 zoom in, -1 zoom out, 0 back to fit (or a ZOOMS index when > 1, e.g. 3 = 2x).
+  function zoom(dir) {
+    if (!state) return;
+    const steps = state.vr ? VR_ZOOMS : ZOOMS;
+    let i = steps.indexOf(state.zoom);
+    if (i < 0) i = steps.indexOf(1);
+    let next;
+    if (dir === 0) next = state.vr ? 1 : 1;
+    else if (dir > 1 && !state.vr) next = ZOOMS[Math.min(ZOOMS.length - 1, dir)];
+    else next = steps[Math.min(steps.length - 1, Math.max(0, i + dir))];
+    if (next === state.zoom) return;
+    state.zoom = next;
+    state.keepView = true;
+    if (state.vr) {
+      vrEl.object3D.scale.setScalar(next);
+      vrEl._zoomLabel.setAttribute('text', 'value', `${Math.round(next * 100)}%`);
+      if (next > 1.2) renderVr(); // re-render sharper for bigger sizes
+    } else {
+      renderDom();
+    }
   }
 
   function open({ doc, page = 1, title = '', subtitle = '', description = '', onPage = null }) {
     if (state) close();
     const scene = document.querySelector('a-scene');
-    state = { doc, page: Math.min(Math.max(1, page), doc.numPages), onPage, title, vr: scene.is('vr-mode') };
+    state = { doc, page: Math.min(Math.max(1, page), doc.numPages), onPage, title, vr: scene.is('vr-mode'), zoom: 1, keepView: false };
     if (state.vr) {
       buildVr();
       renderVr();
