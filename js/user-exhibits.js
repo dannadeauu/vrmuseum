@@ -520,6 +520,247 @@ window.MuseumItems = (() => {
     return el;
   }
 
+
+  // ---------- avatar station: change your own robot's colour, hat and eyes ----------
+  // Everyone sees THEIR OWN robot above the platform. Choices save in this browser
+  // (and come back next visit) and update your robot for other visitors right away.
+  const HAT_LABEL = { none: 'No hat', cowboy: 'Cowboy hat', headset: 'VR headset' };
+  const EYE_LABEL = { happy: 'Happy eyes', open: 'Open eyes', wink: 'Wink' };
+
+  function canvasTexture(draw, size = 256) {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    draw(c.getContext('2d'), size);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return t;
+  }
+
+  let wheelTex;
+  function hueWheelTexture() {
+    if (wheelTex) return wheelTex;
+    wheelTex = canvasTexture((g, S) => {
+      const c = S / 2, R = S / 2 - 2, r = S / 4;
+      for (let d = 0; d < 360; d += 1) { // one thin wedge per degree: hue = angle
+        const a0 = (d - 0.6) * Math.PI / 180, a1 = (d + 0.6) * Math.PI / 180;
+        g.fillStyle = `hsl(${d}, 85%, 55%)`;
+        g.beginPath();
+        g.arc(c, c, R, a0, a1);
+        g.arc(c, c, r, a1, a0, true);
+        g.closePath();
+        g.fill();
+      }
+    }, 512);
+    return wheelTex;
+  }
+
+  function hatIcon(hat) {
+    return canvasTexture((g, S) => {
+      g.translate(S / 2, S / 2);
+      if (hat === 'none') {
+        g.strokeStyle = 'rgba(255,255,255,0.75)';
+        g.lineWidth = 14;
+        g.beginPath(); g.arc(0, 0, 70, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.moveTo(-50, 50); g.lineTo(50, -50); g.stroke();
+      } else if (hat === 'cowboy') {
+        g.fillStyle = '#c98945';
+        g.beginPath(); g.ellipse(0, 34, 112, 34, 0, 0, Math.PI * 2); g.fill();       // brim
+        g.fillStyle = '#d99a55';
+        g.beginPath();                                                              // crown
+        g.moveTo(-58, 30); g.quadraticCurveTo(-66, -70, -24, -78);
+        g.quadraticCurveTo(0, -56, 24, -78); g.quadraticCurveTo(66, -70, 58, 30); g.closePath(); g.fill();
+        g.fillStyle = '#5a3a20';
+        g.fillRect(-60, 2, 120, 18);                                                // band
+        g.fillStyle = 'rgba(0,0,0,0.18)';
+        g.beginPath(); g.ellipse(0, 46, 112, 18, 0, 0, Math.PI); g.fill();
+      } else if (hat === 'headset') {
+        g.fillStyle = '#2a2d34';
+        g.fillRect(-118, -10, 236, 18);                                             // strap
+        g.fillStyle = '#f2f3f5';
+        const w = 190, h = 92, r = 40;
+        g.beginPath();
+        g.moveTo(-w / 2 + r, -h / 2); g.arcTo(w / 2, -h / 2, w / 2, h / 2, r); g.arcTo(w / 2, h / 2, -w / 2, h / 2, r);
+        g.arcTo(-w / 2, h / 2, -w / 2, -h / 2, r); g.arcTo(-w / 2, -h / 2, w / 2, -h / 2, r); g.closePath(); g.fill();
+        g.fillStyle = '#15171c';
+        [-44, 44].forEach((x) => { g.beginPath(); g.arc(x, 0, 22, 0, Math.PI * 2); g.fill(); });
+      }
+    });
+  }
+
+  function eyesIcon(eyes) {
+    return canvasTexture((g, S) => {
+      g.translate(S / 2, S / 2);
+      g.fillStyle = '#123087';
+      g.beginPath(); g.ellipse(0, 0, 118, 70, 0, 0, Math.PI * 2); g.fill();          // visor
+      g.strokeStyle = g.fillStyle = '#bff4ff';
+      g.lineWidth = 16;
+      g.lineCap = 'round';
+      [-1, 1].forEach((side) => {
+        const open = eyes === 'open' || (eyes === 'wink' && side < 0);
+        const x = side * 46;
+        if (open) { g.beginPath(); g.ellipse(x, 0, 16, 22, 0, 0, Math.PI * 2); g.fill(); }
+        else { g.beginPath(); g.arc(x, 10, 24, Math.PI, 0); g.stroke(); }
+      });
+    });
+  }
+
+  function flatPanel(tex, w, h, extra = {}) {
+    const e = document.createElement('a-entity');
+    e.setAttribute('geometry', { primitive: 'plane', width: w, height: h });
+    e.setAttribute('material', { shader: 'flat', transparent: true, alphaTest: 0.05, side: 'double' });
+    e.addEventListener('loaded', () => { e.getObject3D('mesh').material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 }); }, { once: true });
+    Object.entries(extra).forEach(([k, v]) => e.setAttribute(k, v));
+    return e;
+  }
+
+  function roundButton(glyph, x, y, onClick) {
+    const b = document.createElement('a-entity');
+    b.classList.add('clickable');
+    b.setAttribute('geometry', { primitive: 'circle', radius: 0.05, segments: 32 });
+    b.setAttribute('material', { shader: 'flat', color: '#f4f2ee' });
+    b.setAttribute('text', { value: glyph, align: 'center', color: '#1b1b1f', width: 0.9, zOffset: 0.002 });
+    b.setAttribute('position', `${x} ${y} 0.01`);
+    b.addEventListener('mouseenter', () => b.setAttribute('material', 'color', '#ffd28a'));
+    b.addEventListener('mouseleave', () => b.setAttribute('material', 'color', '#f4f2ee'));
+    b.addEventListener('click', (e) => {
+      if (b.sceneEl.is('admin-mode')) return; // admins clicking select the station instead
+      e.stopPropagation();
+      onClick();
+    });
+    return b;
+  }
+
+  // Your own robot, floating above the platform; rebuilt whenever you change your look.
+  AFRAME.registerComponent('avatar-preview', {
+    init() {
+      this.build = () => {
+        if (!window.MuseumAvatar) return;
+        const robot = window.MuseumAvatar.makeRobot(window.MuseumAvatar.look);
+        this.el.setObject3D('mesh', robot.root);
+      };
+      this.build();
+      if (window.MuseumAvatar) this.off = window.MuseumAvatar.onChange(this.build);
+      this.t = 0;
+    },
+    tick(t, dt) {
+      const m = this.el.getObject3D('mesh');
+      if (!m) return;
+      m.rotation.y = Math.sin(t / 2200) * 0.6; // gentle turn so you can see the sides
+      m.position.y = Math.sin(t / 700) * 0.015;
+    },
+    remove() { if (this.off) this.off(); }
+  });
+
+  function buildCustomizer(r) {
+    const el = baseEntity(r);
+    const A = window.MuseumAvatar;
+
+    // Platform (click it in admin mode to move or rotate the station).
+    const plat = document.createElement('a-cylinder');
+    plat.classList.add('outline-target', 'clickable');
+    plat.setAttribute('radius', 0.72);
+    plat.setAttribute('height', 0.14);
+    plat.setAttribute('segments-radial', 48);
+    plat.setAttribute('position', '0 0.07 0');
+    plat.setAttribute('material', 'color: #3c3e44; roughness: 0.6');
+    el.appendChild(plat);
+    const rim = document.createElement('a-torus');
+    rim.classList.add('clickable');
+    rim.setAttribute('radius', 0.72);
+    rim.setAttribute('radius-tubular', 0.012);
+    rim.setAttribute('segments-tubular', 64);
+    rim.setAttribute('rotation', '90 0 0');
+    rim.setAttribute('position', '0 0.14 0');
+    rim.setAttribute('material', 'color: #c9a35c; metalness: 0.5; roughness: 0.4');
+    el.appendChild(rim);
+    addShadow(el, 1.6, 1.6);
+
+    const preview = document.createElement('a-entity');
+    preview.setAttribute('position', '0 1.12 0');
+    preview.setAttribute('avatar-preview', '');
+    el.appendChild(preview);
+
+    if (!A) return el; // multiplayer script missing: just the platform
+
+    const PY = 1.95; // panel row height
+    // Dark backing board so the controls read clearly against any wall or painting.
+    const board = document.createElement('a-entity');
+    board.classList.add('clickable');
+    board.setAttribute('geometry', { primitive: 'plane', width: 1.9, height: 0.86 });
+    board.setAttribute('material', { shader: 'flat', color: '#17181d', opacity: 0.94, transparent: true });
+    board.setAttribute('position', `0 ${PY + 0.02} -0.02`);
+    el.appendChild(board);
+    // Hue wheel: click a colour on the ring.
+    const wheel = flatPanel(hueWheelTexture(), 0.44, 0.44);
+    wheel.classList.add('clickable');
+    wheel.setAttribute('position', `-0.6 ${PY} 0`);
+    const knob = document.createElement('a-entity');
+    knob.setAttribute('geometry', { primitive: 'ring', radiusInner: 0.024, radiusOuter: 0.036, segmentsTheta: 32 });
+    knob.setAttribute('material', { shader: 'flat', color: '#ffffff' });
+    const knobFill = document.createElement('a-entity');
+    knobFill.setAttribute('geometry', { primitive: 'circle', radius: 0.024, segments: 24 });
+    knob.appendChild(knobFill);
+    wheel.appendChild(knob);
+    const placeKnob = (hue) => {
+      const a = hue * Math.PI / 180, rr = 0.165; // middle of the ring (0.11 to 0.22 m)
+      knob.setAttribute('position', `${Math.cos(a) * rr} ${-Math.sin(a) * rr} 0.004`);
+      knobFill.setAttribute('material', { shader: 'flat', color: '#' + A.hueColour(hue).getHexString() });
+    };
+    placeKnob(A.look.hue);
+    wheel.addEventListener('click', (e) => {
+      if (wheel.sceneEl.is('admin-mode')) return;
+      const hit = e.detail && e.detail.intersection;
+      if (!hit || !hit.uv) return;
+      const dx = hit.uv.x - 0.5, dy = 0.5 - hit.uv.y;
+      const rad = Math.hypot(dx, dy);
+      if (rad < 0.2 || rad > 0.52) return; // clicked the hole in the middle
+      e.stopPropagation();
+      A.setLook({ hue: Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360) });
+    });
+    el.appendChild(wheel);
+    const wheelLabel = document.createElement('a-entity');
+    wheelLabel.setAttribute('position', `-0.6 ${PY - 0.3} 0`);
+    wheelLabel.setAttribute('text', { value: 'Colour', align: 'center', color: '#f4f2ee', width: 0.9 });
+    el.appendChild(wheelLabel);
+
+    // Hat and eyes: icon + < > buttons that cycle through the options.
+    const selector = (x, list, key, iconFn, labels) => {
+      let icon = null;
+      const label = document.createElement('a-entity');
+      label.setAttribute('position', `${x} ${PY - 0.3} 0`);
+      el.appendChild(label);
+      const show = (value) => {
+        if (icon) el.removeChild(icon);
+        icon = flatPanel(iconFn(value), 0.3, 0.3, { position: `${x} ${PY + 0.04} 0` });
+        el.appendChild(icon);
+        label.setAttribute('text', { value: labels[value], align: 'center', color: '#f4f2ee', width: 0.9 });
+      };
+      const step = (dir) => {
+        const i = list.indexOf(A.look[key]);
+        A.setLook({ [key]: list[(i + dir + list.length) % list.length] });
+      };
+      el.appendChild(roundButton('<', x - 0.09, PY - 0.17, () => step(-1)));
+      el.appendChild(roundButton('>', x + 0.09, PY - 0.17, () => step(1)));
+      show(A.look[key]);
+      return show;
+    };
+    const showHat = selector(0, A.HATS, 'hat', hatIcon, HAT_LABEL);
+    const showEyes = selector(0.6, A.EYES, 'eyes', eyesIcon, EYE_LABEL);
+
+    const title = document.createElement('a-entity');
+    title.setAttribute('position', `0 ${PY + 0.33} 0`);
+    title.setAttribute('text', { value: 'Customise your robot', align: 'center', color: '#e8d3a0', width: 1.8 });
+    el.appendChild(title);
+
+    // Keep the panels in step with your look (also if you change it elsewhere).
+    const off = A.onChange((look) => { placeKnob(look.hue); showHat(look.hat); showEyes(look.eyes); });
+    // Stop listening once this station is removed or rebuilt.
+    const obs = new MutationObserver(() => { if (!el.isConnected) { off(); obs.disconnect(); } });
+    el.addEventListener('loaded', () => obs.observe(el.parentNode, { childList: true }), { once: true });
+    return el;
+  }
+
   // Starter paintings: generated abstract art (placeholder-art) until replaced.
   function buildPlaceholder(r) {
     const el = flatEntity(r);
@@ -561,7 +802,8 @@ window.MuseumItems = (() => {
   async function build(record) {
     const make = {
       image: buildImage, pdf: buildPdf, model: buildModel,
-      placeholder: buildPlaceholder, knot: buildKnot, bench: buildBench, sign: buildSign
+      placeholder: buildPlaceholder, knot: buildKnot, bench: buildBench, sign: buildSign,
+      customizer: buildCustomizer
     }[record.kind];
     if (!make) return null;
     const token = {};
@@ -633,6 +875,10 @@ window.MuseumItems = (() => {
     {
       id: 'starter-sign', kind: 'sign', text: 'VIRTUAL MUSEUM', title: 'VIRTUAL MUSEUM', style: 'bronze',
       mount: 'wall', stand: true, position: { x: 0, y: 4.55, z: -9.72 }, rotationY: 0, size: 4.2, aspect: 0.17
+    },
+    {
+      id: 'starter-avatar-station', kind: 'customizer', title: 'Avatar station',
+      position: { x: -5.6, y: 0, z: 3.6 }, rotationY: 123, size: 1
     },
     { id: 'starter-bench-west', kind: 'bench', position: { x: -4.2, y: 0, z: 0 }, rotationY: 90, size: 2.4, title: 'Bench' },
     { id: 'starter-bench-east', kind: 'bench', position: { x: 4.2, y: 0, z: 0 }, rotationY: 90, size: 2.4, title: 'Bench' },
@@ -743,6 +989,11 @@ window.MuseumItems = (() => {
       await ensureStarters();
       items = await MuseumStore.allItems();
     }
+    // The avatar station is always in the museum (admins can move it, not delete it). If it
+    // was never saved, show it at its default spot; the first admin move saves it.
+    if (!items.some((r) => r.kind === 'customizer')) {
+      items.push(JSON.parse(JSON.stringify(STARTERS.find((r) => r.kind === 'customizer'))));
+    }
     for (const r of items) {
       try { await build(r); } catch (err) { console.warn('Could not load exhibit', r.title, err); }
     }
@@ -771,7 +1022,7 @@ window.MuseumItems = (() => {
   }
 
   const FLAT_KINDS = ['image', 'pdf', 'placeholder', 'sign'];     // hang on walls or stand on the floor
-  const FLOOR_KINDS = ['model', 'knot', 'bench'];         // always on the floor
+  const FLOOR_KINDS = ['model', 'knot', 'bench', 'customizer'];         // always on the floor
 
   return {
     build, find, discard, clearScene, loadAll, restoreStarters, inspect, kindOf, forgetFile, floorCenterY,

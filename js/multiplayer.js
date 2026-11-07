@@ -40,13 +40,32 @@
   const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 24);
   let myName = cleanName(store.get('museum-visitor-name')) || `Visitor ${Math.floor(10 + Math.random() * 90)}`;
 
-  // Colour from the id: golden-angle hues keep neighbours distinct.
-  function colourFor(id) {
+  // Fallback hue from an id (golden-angle steps keep neighbours distinct).
+  function hueFor(id) {
     let h = 0;
     for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    const hue = (h * 137.508) % 360;
-    return new THREE.Color().setHSL(hue / 360, 0.72, 0.52);
+    return Math.round((h * 137.508) % 360);
   }
+
+  // ---------- avatar look (chosen at the avatar station, saved in this browser) ----------
+  const HATS = ['none', 'cowboy', 'headset'];
+  const EYES = ['happy', 'open', 'wink'];
+  const hueColour = (h) => new THREE.Color().setHSL((((+h || 0) % 360) + 360) % 360 / 360, 0.72, 0.52);
+  const normLook = (l, fallbackHue) => ({
+    hue: l && l.hue !== undefined && l.hue !== null && Number.isFinite(+l.hue)
+      ? Math.round((((+l.hue) % 360) + 360) % 360) : fallbackHue,
+    hat: l && HATS.includes(l.hat) ? l.hat : 'none',
+    eyes: l && EYES.includes(l.eyes) ? l.eyes : 'happy'
+  });
+  const lookKey = (l) => `${l.hue}|${l.hat}|${l.eyes}`;
+  let myLook = (() => {
+    let saved = null;
+    try { saved = JSON.parse(store.get('museum-avatar') || 'null'); } catch { /* ignore */ }
+    const look = normLook(saved, Math.floor(Math.random() * 360));
+    store.set('museum-avatar', JSON.stringify(look)); // same look next visit
+    return look;
+  })();
+  const lookListeners = [];
 
   // ---------- the robot ----------
   const shared = {}; // geometries reused by every robot
@@ -94,10 +113,22 @@
     shared.badge = new THREE.CircleGeometry(0.055, 28);
     shared.arm = ball(0.055, 16, 12);
     shared.hand = ball(0.05, 16, 12);
+    shared.eyeDot = new THREE.CircleGeometry(0.026, 24);
+    // Cowboy hat: wide brim, pinched crown, dark band.
+    shared.brim = new THREE.CylinderGeometry(0.215, 0.205, 0.014, 40);
+    shared.crown = new THREE.CylinderGeometry(0.085, 0.11, 0.12, 32);
+    shared.crownTop = new THREE.SphereGeometry(0.085, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    shared.band = new THREE.CylinderGeometry(0.112, 0.114, 0.026, 32, 1, true);
+    // VR headset: rounded visor box + strap round the head.
+    shared.goggles = new THREE.CapsuleGeometry(0.048, 0.13, 8, 20);
+    shared.lens = new THREE.CircleGeometry(0.03, 20);
+    shared.strap = new THREE.TorusGeometry(0.168, 0.012, 8, 48);
     return shared;
   }
 
-  function makeRobot(colour) {
+  function makeRobot(lookOrColour) {
+    const look = lookOrColour && lookOrColour.isColor ? null : normLook(lookOrColour, 200);
+    const colour = look ? hueColour(look.hue) : lookOrColour;
     const g = geo();
     const shell = new THREE.Color(0xffffff).lerp(colour, 0.38);   // tinted body
     const accent = colour.clone();                                // ears, fins, badge, arms
@@ -127,12 +158,15 @@
     const visor = new THREE.Mesh(g.visor, visorMat);
     visor.position.y = -0.006;
     skull.add(visor);
+    const eyesStyle = look ? look.eyes : 'happy';
     [-1, 1].forEach((side) => {
-      const eye = new THREE.Mesh(g.eye, eyeMat); // upside-down "U": a happy ^ eye
+      // Eyes: happy = ^ ^, open = round glowing dots, wink = one dot and one ^.
+      const open = eyesStyle === 'open' || (eyesStyle === 'wink' && side < 0);
+      const eye = new THREE.Mesh(open ? g.eyeDot : g.eye, eyeMat);
       const az = side * 0.22, el = 0.03, R = 0.17 * 1.045; // just in front of the visor
       eye.position.set(R * Math.sin(az) * Math.cos(el), R * Math.sin(el) - 0.006, R * Math.cos(az) * Math.cos(el));
       eye.rotation.y = az; // face outward from the head
-      eye.scale.set(1 / 1.18, 1 / 0.95, 1); // undo the skull's squash so eyes stay round
+      eye.scale.set(1 / 1.18, (open ? 1.3 : 1) / 0.95, 1); // undo the skull's squash (open eyes a little tall)
       skull.add(eye);
       const ear = new THREE.Mesh(g.ear, accentMat);
       ear.rotation.z = Math.PI / 2;
@@ -148,9 +182,56 @@
       fin.scale.set(1, 1, 1.6);
       head.add(fin);
     });
-    const top = new THREE.Mesh(g.topBump, shellMat);
-    top.position.set(0, 0.165, -0.01);
-    head.add(top);
+    const hat = look ? look.hat : 'none';
+    if (hat === 'none') {
+      const top = new THREE.Mesh(g.topBump, shellMat);
+      top.position.set(0, 0.165, -0.01);
+      head.add(top);
+    } else if (hat === 'cowboy') {
+      const felt = lam(0xc98945, { emissive: 0x3a2410 });
+      const bandMat = lam(0x5a3a20, { side: THREE.DoubleSide });
+      const hatGroup = new THREE.Group();
+      hatGroup.position.set(0, 0.165, -0.005);
+      hatGroup.rotation.x = -0.12; // tipped back a little
+      const brim = new THREE.Mesh(g.brim, felt);
+      brim.scale.set(1.05, 1, 0.9);
+      hatGroup.add(brim);
+      const crown = new THREE.Mesh(g.crown, felt);
+      crown.position.y = 0.065;
+      crown.scale.set(1, 1, 0.82);
+      hatGroup.add(crown);
+      const top = new THREE.Mesh(g.crownTop, felt);
+      top.position.y = 0.125;
+      top.scale.set(1, 0.35, 0.82);
+      hatGroup.add(top);
+      const band = new THREE.Mesh(g.band, bandMat);
+      band.position.y = 0.024;
+      band.scale.set(1, 1, 0.82);
+      hatGroup.add(band);
+      head.add(hatGroup);
+    } else if (hat === 'headset') {
+      const white = lam(0xf2f3f5, { emissive: 0x3a3b40 });
+      const black = new THREE.MeshPhongMaterial({ color: 0x15171c, specular: 0x7a8aa0, shininess: 60 });
+      const set = new THREE.Group();
+      set.position.set(0, 0.13, 0.05);
+      set.rotation.x = -0.55; // pushed up onto the forehead, so the eyes still show
+      const goggles = new THREE.Mesh(g.goggles, white);
+      goggles.rotation.z = Math.PI / 2;
+      goggles.scale.set(1, 1, 0.75);
+      goggles.position.z = 0.08;
+      set.add(goggles);
+      [-1, 1].forEach((side) => {
+        const lens = new THREE.Mesh(g.lens, black);
+        lens.position.set(side * 0.055, 0, 0.118);
+        set.add(lens);
+      });
+      head.add(set);
+      const strap = new THREE.Mesh(g.strap, lam(0x2a2d34));
+      strap.rotation.x = Math.PI / 2 - 0.5;
+      strap.scale.set(1.2, 1.02, 1);
+      strap.position.set(0, 0.1, -0.005);
+      head.add(strap);
+    }
 
     // Body, badge and arms (turn with yaw only).
     const body = new THREE.Mesh(g.body, shellMat);
@@ -227,17 +308,33 @@
 
   function ensurePeer(id, meta = {}) {
     let p = peers.get(id);
+    const look = normLook(meta.hue !== undefined ? meta : null, hueFor(id));
     if (!p) {
-      const colour = colourFor(id);
-      const robot = makeRobot(colour);
+      const robot = makeRobot(look);
       container.add(robot.root);
       robot.hands.forEach((h) => container.add(h));
       p = {
-        robot, colour, name: '', tag: null, bubble: null, bubbleUntil: 0, lastSeen: performance.now(),
-        target: null, cur: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, hands: [null, null]
+        robot, colour: hueColour(look.hue), look: lookKey(look), name: '', tag: null, bubble: null, bubbleUntil: 0,
+        lastSeen: performance.now(), target: null, cur: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, hands: [null, null]
       };
       robot.root.visible = false; // until the first position arrives
       peers.set(id, p);
+    } else if (meta.hue !== undefined && lookKey(look) !== p.look) {
+      // They changed their look at the avatar station: swap in a new robot in the same spot.
+      const old = p.robot;
+      const robot = makeRobot(look);
+      robot.root.position.copy(old.root.position);
+      robot.root.rotation.copy(old.root.rotation);
+      robot.root.visible = old.root.visible;
+      container.remove(old.root);
+      old.hands.forEach((h) => container.remove(h));
+      container.add(robot.root);
+      robot.hands.forEach((h) => container.add(h));
+      if (p.bubble) robot.bob.add(p.bubble);
+      p.robot = robot;
+      p.colour = hueColour(look.hue);
+      p.look = lookKey(look);
+      p.name = ''; // re-make the name tag with the new colour
     }
     if (meta.name !== undefined && cleanName(meta.name) !== p.name) {
       p.name = cleanName(meta.name) || 'Visitor';
@@ -428,7 +525,7 @@
     container = new THREE.Group();
     container.name = 'visitors';
     scene.object3D.add(container);
-    const myColour = colourFor(myId);
+    let myColour = hueColour(myLook.hue);
     const announced = new Set(); // visitors whose arrival was already shown
     let isAdmin = false;          // logged-in admins skip the visitor limit
     try { isAdmin = await online.isAdmin(); } catch { /* not logged in */ }
@@ -439,7 +536,15 @@
       config: { presence: { key: myId }, broadcast: { self: false } }
     });
 
-    track = () => channel.track({ name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device });
+    track = () => channel.track({
+      name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device,
+      hue: myLook.hue, hat: myLook.hat, eyes: myLook.eyes
+    });
+    // Changed look at the avatar station: everyone sees the new robot right away.
+    lookListeners.push(() => {
+      myColour = hueColour(myLook.hue);
+      if (isPresent) track();
+    });
 
     // ---- the 10-visitor limit ----
     // Visitors who count: everyone present except logged-in admins.
@@ -691,6 +796,20 @@
     const go = () => start().catch((err) => console.warn('Multiplayer could not start', err));
     if (scene.hasLoaded) go(); else scene.addEventListener('loaded', go, { once: true });
   });
+
+  // The avatar station (js/user-exhibits.js) uses this to preview and change your look.
+  window.MuseumAvatar = {
+    HATS, EYES, hueColour, makeRobot,
+    get look() { return { ...myLook }; },
+    setLook(changes) {
+      const next = normLook({ ...myLook, ...changes }, myLook.hue);
+      if (lookKey(next) === lookKey(myLook)) return;
+      myLook = next;
+      store.set('museum-avatar', JSON.stringify(myLook)); // remembered for next time
+      lookListeners.slice().forEach((f) => f(myLook));
+    },
+    onChange(f) { lookListeners.push(f); return () => lookListeners.splice(lookListeners.indexOf(f), 1); }
+  };
 
   // For debugging in the console.
   window.MuseumVisitors = { peers, get id() { return myId; }, get name() { return myName; } };

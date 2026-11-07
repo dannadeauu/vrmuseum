@@ -16,11 +16,12 @@
   const DEFAULT_SIZE = { image: 1.6, pdf: 0.9, model: 0.8 };
   const SIZE_RANGE = {
     image: [0.3, 4], pdf: [0.3, 2.5], model: [0.2, 3],
-    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8]
+    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8], customizer: [1, 1]
   };
   const KIND_LABEL = {
     image: 'Image', pdf: 'PDF', model: '3D model',
-    placeholder: 'Painting (starter)', knot: 'Sculpture (starter)', bench: 'Bench', sign: 'Sign'
+    placeholder: 'Painting (starter)', knot: 'Sculpture (starter)', bench: 'Bench', sign: 'Sign',
+    customizer: 'Avatar station (can be moved, not deleted)'
   };
   const isFlat = (rec) => MuseumItems.FLAT_KINDS.includes(rec.kind); // walls or floor; everything else floor only
   const ROOM_HEIGHT = 6;   // wall height of the rotunda
@@ -97,7 +98,7 @@
         <label data-show="text">Artist <input id="ed-artist" type="text"></label>
         <label data-show="text">Year <input id="ed-year" type="text"></label>
         <label data-show="text">Description <textarea id="ed-description" rows="4"></textarea></label>
-        <label>Size <span id="ed-size-val"></span>
+        <label data-show="size">Size <span id="ed-size-val"></span>
           <input id="ed-size" type="range" step="0.05">
         </label>
         <p id="ed-mount" class="admin-hint"></p>
@@ -110,7 +111,7 @@
         <label data-show="stand" class="admin-check"><input id="ed-stand" type="checkbox"> On a display stand</label>
         <div class="admin-row">
           <button type="button" class="admin-btn" data-act="move">Move</button>
-          <button type="button" class="admin-btn admin-danger" data-act="delete">Delete</button>
+          <button type="button" class="admin-btn admin-danger" data-act="delete" data-show="delete">Delete</button>
           <button type="button" class="admin-btn" data-act="deselect">Done</button>
         </div>
       </section>
@@ -513,7 +514,9 @@
       spin: rec.kind === 'model' || rec.kind === 'knot',
       hover: rec.kind === 'model' || rec.kind === 'knot',
       stand: floorFlat,
-      text: rec.kind !== 'bench' && rec.kind !== 'sign',
+      text: !['bench', 'sign', 'customizer'].includes(rec.kind),
+      size: rec.kind !== 'customizer',
+      delete: rec.kind !== 'customizer',
       sign: rec.kind === 'sign'
     };
     editor.querySelectorAll('[data-show]').forEach((n) => { n.hidden = !show[n.dataset.show]; });
@@ -549,6 +552,10 @@
   async function deleteSelected() {
     if (!selected) return;
     const rec = selected;
+    if (rec.kind === 'customizer') {
+      status('The avatar station can be moved and rotated, but not deleted.');
+      return;
+    }
     const note = rec.fileId
       ? 'This removes the uploaded file from this browser.'
       : rec.id.startsWith('starter-') ? 'Starter pieces can be brought back with "Restore starter exhibits".' : '';
