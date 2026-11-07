@@ -4,28 +4,80 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Virtual Museum</title>
+  <!-- Auto-update: browsers (especially the Quest Browser) can keep an old copy of the site.
+       On load, and every few minutes, compare with version.json and move to the newest version.
+       Keep this number, the ?v= tags below and version.json the same: run tools/bump-version.sh. -->
+  <script>
+    window.MUSEUM_VERSION = '2026110706';
+    (function () {
+      function banner() {
+        if (document.getElementById('update-banner')) return;
+        var b = document.createElement('div');
+        b.id = 'update-banner';
+        b.setAttribute('role', 'status');
+        b.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:200000;' +
+          'display:flex;gap:10px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;' +
+          'background:#1b1c22;color:#f2efe9;border:1px solid rgba(242,239,233,.2);' +
+          'font:14px/1.3 system-ui,-apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.4)';
+        b.innerHTML = 'The museum has been updated.<button style="border:0;border-radius:7px;padding:6px 12px;' +
+          'background:#ffb347;color:#1b1b1f;font:inherit;font-weight:700;cursor:pointer">Reload</button>';
+        b.querySelector('button').onclick = function () { go(window.__museumNewVersion); };
+        document.body.appendChild(b);
+      }
+      function go(v) {
+        var u = new URL(location.href);
+        u.searchParams.set('v', v); // a new address, so the browser can't reuse its old copy
+        location.replace(u.toString());
+      }
+      function check(first) {
+        fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (v) {
+            if (!v || !v.version || v.version === window.MUSEUM_VERSION) return;
+            window.__museumNewVersion = v.version;
+            var key = 'museum-updated-to-' + v.version;
+            var tried = false;
+            try { tried = !!sessionStorage.getItem(key); } catch (e) { /* private mode */ }
+            var scene = document.querySelector('a-scene');
+            var joined = !!document.getElementById('chat');     // already in the museum
+            var inVR = scene && scene.is && scene.is('vr-mode');
+            if ((first || !joined) && !inVR && !tried) {        // just arrived: switch straight away
+              try { sessionStorage.setItem(key, '1'); } catch (e) { /* ignore */ }
+              go(v.version);
+            } else if (inVR) {                                   // don't yank anyone out of VR
+              scene.addEventListener('exit-vr', banner, { once: true });
+            } else {
+              banner();
+            }
+          })
+          .catch(function () { /* offline: keep going */ });
+      }
+      check(true);
+      setInterval(function () { check(false); }, 180000);
+    })();
+  </script>
   <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
   <!-- Playfair Display for signs (drawn onto the sign textures in js/user-exhibits.js) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap">
-  <link rel="stylesheet" href="css/admin.css?v=2026110705">
-  <link rel="stylesheet" href="css/chat.css?v=2026110705">
-  <link rel="stylesheet" href="css/reader.css?v=2026110705">
-  <script src="js/components.js?v=2026110705"></script>
-  <script src="js/architecture.js?v=2026110705"></script>
-  <script src="js/rooms.js?v=2026110705"></script>
+  <link rel="stylesheet" href="css/admin.css?v=2026110706">
+  <link rel="stylesheet" href="css/chat.css?v=2026110706">
+  <link rel="stylesheet" href="css/reader.css?v=2026110706">
+  <script src="js/components.js?v=2026110706"></script>
+  <script src="js/architecture.js?v=2026110706"></script>
+  <script src="js/rooms.js?v=2026110706"></script>
   <!-- Shared online museum (Supabase): library, then your project settings -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-  <script src="js/supabase-config.js?v=2026110705"></script>
-  <script src="js/store.js?v=2026110705"></script>
-  <script src="js/user-exhibits.js?v=2026110705"></script>
+  <script src="js/supabase-config.js?v=2026110706"></script>
+  <script src="js/store.js?v=2026110706"></script>
+  <script src="js/user-exhibits.js?v=2026110706"></script>
   <!-- Big reader for PDFs (screen overlay, or a floating panel in VR) -->
-  <script src="js/pdf-reader.js?v=2026110705"></script>
+  <script src="js/pdf-reader.js?v=2026110706"></script>
   <!-- Admin mode: open the page with ?admin in the URL -->
-  <script src="js/admin.js?v=2026110705"></script>
+  <script src="js/admin.js?v=2026110706"></script>
   <!-- Other visitors as robots + text chat (needs the online museum) -->
-  <script src="js/multiplayer.js?v=2026110705"></script>
+  <script src="js/multiplayer.js?v=2026110706"></script>
 </head>
 <body>
   <!--
