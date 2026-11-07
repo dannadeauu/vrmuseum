@@ -68,6 +68,43 @@
   const lookListeners = [];
 
   // ---------- the robot ----------
+  // Cowboy hat brim: an oval ring whose sides sweep up (more toward the edge) while the
+  // front and back dip a little, like a classic western hat.
+  const BRIM = { rIn: 0.1, rOut: 0.225, depth: 0.86 };
+  function brimLift(f, th) {
+    const c = Math.cos(th), sn = Math.sin(th);
+    return f * f * (0.085 * c * c) - f * f * 0.014 * sn * sn;
+  }
+  function cowboyBrim(segs = 72, rings = 8) {
+    const pos = [], idx = [];
+    for (let j = 0; j <= rings; j++) {
+      const f = j / rings, r = BRIM.rIn + (BRIM.rOut - BRIM.rIn) * f;
+      for (let i = 0; i <= segs; i++) {
+        const th = (i / segs) * Math.PI * 2;
+        pos.push(Math.cos(th) * r, brimLift(f, th), Math.sin(th) * r * BRIM.depth);
+      }
+    }
+    for (let j = 0; j < rings; j++) {
+      for (let i = 0; i < segs; i++) {
+        const a = j * (segs + 1) + i, b = a + segs + 1;
+        idx.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
+  function cowboyBrimEdge() {
+    const pts = [];
+    for (let i = 0; i < 64; i++) {
+      const th = (i / 64) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(th) * BRIM.rOut, brimLift(1, th), Math.sin(th) * BRIM.rOut * BRIM.depth));
+    }
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 96, 0.0075, 8, true);
+  }
+
   const shared = {}; // geometries reused by every robot
 
   // A smooth oval panel lying on a sphere of radius R, facing +z. halfW / halfH are the
@@ -115,10 +152,11 @@
     shared.hand = ball(0.05, 16, 12);
     shared.eyeDot = new THREE.CircleGeometry(0.026, 24);
     // Cowboy hat: wide brim, pinched crown, dark band.
-    shared.brim = new THREE.CylinderGeometry(0.215, 0.205, 0.014, 40);
+    shared.brim = cowboyBrim();                  // curls up at the sides, dips front and back
+    shared.brimEdge = cowboyBrimEdge();          // darker stitched rim following the curl
     shared.crown = new THREE.CylinderGeometry(0.085, 0.11, 0.12, 32);
     shared.crownTop = new THREE.SphereGeometry(0.085, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-    shared.band = new THREE.CylinderGeometry(0.112, 0.114, 0.026, 32, 1, true);
+    shared.band = new THREE.CylinderGeometry(0.112, 0.114, 0.012, 32, 1, true);
     // VR headset: rounded visor box + strap round the head.
     shared.goggles = new THREE.CapsuleGeometry(0.048, 0.13, 8, 20);
     shared.lens = new THREE.CircleGeometry(0.03, 20);
@@ -188,14 +226,15 @@
       top.position.set(0, 0.165, -0.01);
       head.add(top);
     } else if (hat === 'cowboy') {
-      const felt = lam(0xc98945, { emissive: 0x3a2410 });
+      const felt = lam(0xb7773f, { emissive: 0x3a2410, side: THREE.DoubleSide }); // leather brown
       const bandMat = lam(0x5a3a20, { side: THREE.DoubleSide });
       const hatGroup = new THREE.Group();
       hatGroup.position.set(0, 0.165, -0.005);
       hatGroup.rotation.x = -0.12; // tipped back a little
       const brim = new THREE.Mesh(g.brim, felt);
-      brim.scale.set(1.05, 1, 0.9);
       hatGroup.add(brim);
+      const edge = new THREE.Mesh(g.brimEdge, bandMat);
+      hatGroup.add(edge);
       const crown = new THREE.Mesh(g.crown, felt);
       crown.position.y = 0.065;
       crown.scale.set(1, 1, 0.82);
@@ -204,10 +243,12 @@
       top.position.y = 0.125;
       top.scale.set(1, 0.35, 0.82);
       hatGroup.add(top);
-      const band = new THREE.Mesh(g.band, bandMat);
-      band.position.y = 0.024;
-      band.scale.set(1, 1, 0.82);
-      hatGroup.add(band);
+      [0.018, 0.034].forEach((y) => { // doubled band, like stitched leather cord
+        const band = new THREE.Mesh(g.band, bandMat);
+        band.position.y = y;
+        band.scale.set(1 - y * 0.6, 1, 0.82);
+        hatGroup.add(band);
+      });
       head.add(hatGroup);
     } else if (hat === 'headset') {
       const white = lam(0xf2f3f5, { emissive: 0x3a3b40 });

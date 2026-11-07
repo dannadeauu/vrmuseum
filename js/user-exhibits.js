@@ -555,55 +555,70 @@ window.MuseumItems = (() => {
     return wheelTex;
   }
 
-  function hatIcon(hat) {
-    return canvasTexture((g, S) => {
-      g.translate(S / 2, S / 2);
-      if (hat === 'none') {
-        g.strokeStyle = 'rgba(255,255,255,0.75)';
-        g.lineWidth = 14;
-        g.beginPath(); g.arc(0, 0, 70, 0, Math.PI * 2); g.stroke();
-        g.beginPath(); g.moveTo(-50, 50); g.lineTo(50, -50); g.stroke();
-      } else if (hat === 'cowboy') {
-        g.fillStyle = '#c98945';
-        g.beginPath(); g.ellipse(0, 34, 112, 34, 0, 0, Math.PI * 2); g.fill();       // brim
-        g.fillStyle = '#d99a55';
-        g.beginPath();                                                              // crown
-        g.moveTo(-58, 30); g.quadraticCurveTo(-66, -70, -24, -78);
-        g.quadraticCurveTo(0, -56, 24, -78); g.quadraticCurveTo(66, -70, 58, 30); g.closePath(); g.fill();
-        g.fillStyle = '#5a3a20';
-        g.fillRect(-60, 2, 120, 18);                                                // band
-        g.fillStyle = 'rgba(0,0,0,0.18)';
-        g.beginPath(); g.ellipse(0, 46, 112, 18, 0, 0, Math.PI); g.fill();
-      } else if (hat === 'headset') {
-        g.fillStyle = '#2a2d34';
-        g.fillRect(-118, -10, 236, 18);                                             // strap
-        g.fillStyle = '#f2f3f5';
-        const w = 190, h = 92, r = 40;
-        g.beginPath();
-        g.moveTo(-w / 2 + r, -h / 2); g.arcTo(w / 2, -h / 2, w / 2, h / 2, r); g.arcTo(w / 2, h / 2, -w / 2, h / 2, r);
-        g.arcTo(-w / 2, h / 2, -w / 2, -h / 2, r); g.arcTo(-w / 2, -h / 2, w / 2, -h / 2, r); g.closePath(); g.fill();
-        g.fillStyle = '#15171c';
-        [-44, 44].forEach((x) => { g.beginPath(); g.arc(x, 0, 22, 0, Math.PI * 2); g.fill(); });
-      }
-    });
+  // Text with a soft translucent pill behind it, readable on any wall or painting.
+  let pillTex;
+  function pillTexture() {
+    if (pillTex) return pillTex;
+    pillTex = canvasTexture((g, S) => {
+      const h = S / 4, r = h / 2;
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.moveTo(r, 0); g.lineTo(S - r, 0); g.arc(S - r, r, r, -Math.PI / 2, Math.PI / 2);
+      g.lineTo(r, h); g.arc(r, r, r, Math.PI / 2, -Math.PI / 2); g.closePath(); g.fill();
+    }, 512);
+    pillTex.repeat.set(1, 0.25); // only the top quarter holds the pill shape
+    pillTex.offset.set(0, 0.75);
+    return pillTex;
+  }
+  function pillLabel(text, x, y, { width = 0.9, color = '#f4f2ee' } = {}) {
+    const el = document.createElement('a-entity');
+    el.setAttribute('position', `${x} ${y} 0`);
+    const pill = document.createElement('a-entity');
+    pill.setAttribute('position', '0 0 -0.002');
+    pill.addEventListener('loaded', () => {
+      pill.getObject3D('mesh').material = new THREE.MeshBasicMaterial({
+        map: pillTexture(), color: 0x14151a, transparent: true, opacity: 0.6, depthWrite: false
+      });
+    }, { once: true });
+    el.appendChild(pill);
+    const set = (value) => {
+      const w = Math.max(0.2, value.length * width * 0.026 + 0.08); // roughly fits the text
+      const h = 0.065 * (width / 0.9);
+      pill.setAttribute('geometry', { primitive: 'plane', width: w, height: h });
+      el.setAttribute('text', { value, align: 'center', color, width });
+    };
+    set(text);
+    return { el, set };
   }
 
-  function eyesIcon(eyes) {
-    return canvasTexture((g, S) => {
-      g.translate(S / 2, S / 2);
-      g.fillStyle = '#123087';
-      g.beginPath(); g.ellipse(0, 0, 118, 70, 0, 0, Math.PI * 2); g.fill();          // visor
-      g.strokeStyle = g.fillStyle = '#bff4ff';
-      g.lineWidth = 16;
-      g.lineCap = 'round';
-      [-1, 1].forEach((side) => {
-        const open = eyes === 'open' || (eyes === 'wink' && side < 0);
-        const x = side * 46;
-        if (open) { g.beginPath(); g.ellipse(x, 0, 16, 22, 0, 0, Math.PI * 2); g.fill(); }
-        else { g.beginPath(); g.arc(x, 10, 24, Math.PI, 0); g.stroke(); }
-      });
-    });
-  }
+  // A small turning 3D preview of your own head: wearing your hat ('hat'), or bare to
+  // show your eyes ('eyes'). Rebuilt whenever you change your look.
+  AFRAME.registerComponent('look-preview', {
+    schema: { part: { default: 'hat' } },
+    init() {
+      this.build = () => {
+        const A = window.MuseumAvatar;
+        if (!A) return;
+        const look = A.look;
+        const robot = A.makeRobot(this.data.part === 'eyes' ? { ...look, hat: 'none' } : look);
+        const head = robot.head;
+        head.parent.remove(head);
+        head.position.set(0, this.data.part === 'hat' ? -0.04 : 0, 0);
+        const holder = new THREE.Group();
+        holder.add(head);
+        this.el.setObject3D('mesh', holder);
+      };
+      this.build();
+      if (window.MuseumAvatar) this.off = window.MuseumAvatar.onChange(this.build);
+    },
+    tick(t) {
+      const m = this.el.getObject3D('mesh');
+      if (!m) return;
+      // Hats turn all the way round; the face sways gently so the eyes stay in view.
+      m.rotation.y = this.data.part === 'hat' ? t / 2200 : Math.sin(t / 1800) * 0.35;
+    },
+    remove() { if (this.off) this.off(); }
+  });
 
   function flatPanel(tex, w, h, extra = {}) {
     const e = document.createElement('a-entity');
@@ -684,13 +699,6 @@ window.MuseumItems = (() => {
     if (!A) return el; // multiplayer script missing: just the platform
 
     const PY = 1.95; // panel row height
-    // Dark backing board so the controls read clearly against any wall or painting.
-    const board = document.createElement('a-entity');
-    board.classList.add('clickable');
-    board.setAttribute('geometry', { primitive: 'plane', width: 1.9, height: 0.86 });
-    board.setAttribute('material', { shader: 'flat', color: '#17181d', opacity: 0.94, transparent: true });
-    board.setAttribute('position', `0 ${PY + 0.02} -0.02`);
-    el.appendChild(board);
     // Hue wheel: click a colour on the ring.
     const wheel = flatPanel(hueWheelTexture(), 0.44, 0.44);
     wheel.classList.add('clickable');
@@ -719,23 +727,18 @@ window.MuseumItems = (() => {
       A.setLook({ hue: Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360) });
     });
     el.appendChild(wheel);
-    const wheelLabel = document.createElement('a-entity');
-    wheelLabel.setAttribute('position', `-0.6 ${PY - 0.3} 0`);
-    wheelLabel.setAttribute('text', { value: 'Colour', align: 'center', color: '#f4f2ee', width: 0.9 });
-    el.appendChild(wheelLabel);
+    el.appendChild(pillLabel('Colour', -0.6, PY - 0.3).el);
 
-    // Hat and eyes: icon + < > buttons that cycle through the options.
-    const selector = (x, list, key, iconFn, labels) => {
-      let icon = null;
-      const label = document.createElement('a-entity');
-      label.setAttribute('position', `${x} ${PY - 0.3} 0`);
-      el.appendChild(label);
-      const show = (value) => {
-        if (icon) el.removeChild(icon);
-        icon = flatPanel(iconFn(value), 0.3, 0.3, { position: `${x} ${PY + 0.04} 0` });
-        el.appendChild(icon);
-        label.setAttribute('text', { value: labels[value], align: 'center', color: '#f4f2ee', width: 0.9 });
-      };
+    // Hat and eyes: a small turning 3D preview of your head + < > buttons that cycle options.
+    const selector = (x, list, key, part, labels) => {
+      const preview = document.createElement('a-entity');
+      preview.setAttribute('position', `${x} ${PY + 0.06} 0`);
+      preview.setAttribute('scale', '0.8 0.8 0.8');
+      preview.setAttribute('look-preview', { part });
+      el.appendChild(preview);
+      const label = pillLabel('', x, PY - 0.3);
+      el.appendChild(label.el);
+      const show = (value) => label.set(labels[value]);
       const step = (dir) => {
         const i = list.indexOf(A.look[key]);
         A.setLook({ [key]: list[(i + dir + list.length) % list.length] });
@@ -745,13 +748,10 @@ window.MuseumItems = (() => {
       show(A.look[key]);
       return show;
     };
-    const showHat = selector(0, A.HATS, 'hat', hatIcon, HAT_LABEL);
-    const showEyes = selector(0.6, A.EYES, 'eyes', eyesIcon, EYE_LABEL);
+    const showHat = selector(0, A.HATS, 'hat', 'hat', HAT_LABEL);
+    const showEyes = selector(0.6, A.EYES, 'eyes', 'eyes', EYE_LABEL);
 
-    const title = document.createElement('a-entity');
-    title.setAttribute('position', `0 ${PY + 0.33} 0`);
-    title.setAttribute('text', { value: 'Customise your robot', align: 'center', color: '#e8d3a0', width: 1.8 });
-    el.appendChild(title);
+    el.appendChild(pillLabel('Customise your robot', 0, PY + 0.34, { width: 1.6, color: '#e8d3a0' }).el);
 
     // Keep the panels in step with your look (also if you change it elsewhere).
     const off = A.onChange((look) => { placeKnob(look.hue); showHat(look.hat); showEyes(look.eyes); });
