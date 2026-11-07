@@ -135,7 +135,7 @@ window.MuseumItems = (() => {
       artist: r.artist || '',
       year: r.year || '',
       description: r.description || ''
-    }, extra);
+    }, r.kind === 'pdf' ? { panel: false, hint: '(click / trigger to read)' } : {}, extra);
   }
 
   function baseEntity(r) {
@@ -308,6 +308,20 @@ window.MuseumItems = (() => {
         el.appendChild(btn);
       });
     }
+
+    // Click the document to read it big: a reader in the middle of the screen (or, in VR,
+    // a floating panel in front of you). It opens at this page and the wall follows along.
+    el.addEventListener('click', () => {
+      if (el.sceneEl.is('admin-mode') || !window.PdfReader) return;
+      window.PdfReader.open({
+        doc,
+        page: pageNum,
+        title: r.title || 'Document',
+        subtitle: [r.artist, r.year].filter(Boolean).join(', '),
+        description: r.description || '',
+        onPage: (n) => { if (n !== pageNum) { pageNum = n; render(pageNum); } }
+      });
+    });
     return el;
   }
 

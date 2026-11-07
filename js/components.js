@@ -179,7 +179,9 @@ AFRAME.registerComponent('exhibit', {
     description: { default: '' },
     frame: { default: true },
     plaqueOffset: { default: '' }, // "x y z"; empty = auto (right of the piece)
-    panelOffset: { default: '' }   // "x y z"; empty = auto (above the piece)
+    panelOffset: { default: '' },  // "x y z"; empty = auto (above the piece)
+    panel: { default: true },       // false: clicking doesn't open the description panel (e.g. PDFs open a reader)
+    hint: { default: '' }           // plaque hint; empty = "(click / trigger for more)" when there's a description
   },
 
   init() {
@@ -207,7 +209,8 @@ AFRAME.registerComponent('exhibit', {
     plaque.setAttribute('geometry', 'primitive: plane; width: 0.6; height: 0.32');
     plaque.setAttribute('material', 'color: #faf8f4; shader: flat');
     plaque.setAttribute('text', {
-      value: `${d.title}\n${[d.artist, d.year].filter(Boolean).join(', ')}${d.description ? '\n\n(click / trigger for more)' : ''}`,
+      value: `${d.title}\n${[d.artist, d.year].filter(Boolean).join(', ')}${
+        d.hint ? '\n\n' + d.hint : (d.description && d.panel ? '\n\n(click / trigger for more)' : '')}`,
       color: '#2b2119', width: 0.55, align: 'left', wrapCount: 28, baseline: 'center', xOffset: 0.03
     });
     el.appendChild(plaque);
@@ -229,7 +232,7 @@ AFRAME.registerComponent('exhibit', {
 
     el.addEventListener('click', () => {
       if (el.sceneEl.is('admin-mode')) return; // in admin mode a click selects instead
-      if (!d.description) return; // nothing to show: don't open an empty panel
+      if (!d.description || !d.panel) return; // nothing to show, or the piece handles clicks itself
       panel.setAttribute('visible', !panel.getAttribute('visible'));
     });
     el.addEventListener('mouseenter', () => el.object3D.scale.setScalar(1.02));
