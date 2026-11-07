@@ -13,8 +13,9 @@
  */
 window.PdfReader = (() => {
   let state = null; // { doc, page, zoom, onPage, ... } while open
-  const ZOOMS = [1, 1.25, 1.5, 2, 2.5, 3, 4]; // 1 = whole page fits the reader
+  const ZOOM_MIN = 1, ZOOM_MAX = 5;   // 1 = whole page fits the reader
   const VR_ZOOMS = [0.8, 1, 1.25, 1.5, 2];
+  let sharpenTimer = 0;
 
   // ---------------------------------------------------------------- PC / phone
   let dom;
@@ -52,30 +53,48 @@ window.PdfReader = (() => {
     root.querySelector('.pr-close').addEventListener('click', close);
     root.querySelector('.pr-prev').addEventListener('click', () => go(-1));
     root.querySelector('.pr-next').addEventListener('click', () => go(1));
-    root.querySelector('.pr-zoom-in').addEventListener('click', () => zoom(1));
-    root.querySelector('.pr-zoom-out').addEventListener('click', () => zoom(-1));
-    root.querySelector('.pr-zoom-fit').addEventListener('click', () => zoom(0));
+    root.querySelector('.pr-zoom-in').addEventListener('click', () => zoomBy(1.25));
+    root.querySelector('.pr-zoom-out').addEventListener('click', () => zoomBy(1 / 1.25));
+    root.querySelector('.pr-zoom-fit').addEventListener('click', () => setZoom(1));
     const stage = root.querySelector('.pr-stage');
-    // Ctrl/Cmd + scroll wheel, or a trackpad pinch (browsers send it as Ctrl + wheel).
+    // All scrolling and zooming inside the reader is handled here:
+    //  - trackpad pinch (sent as Ctrl + wheel) or Ctrl/Cmd + mouse wheel: smooth, gentle zoom
+    //    centred on the pointer;
+    //  - two-finger trackpad scroll / mouse wheel: moves the page freely in any direction,
+    //    diagonals included (browsers otherwise lock scrolling to one axis).
     stage.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      if (!state || state.vr) return;
       e.preventDefault();
-      zoom(e.deltaY < 0 ? 1 : -1);
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? stage.clientHeight : 1;
+      let dx = e.deltaX * unit, dy = e.deltaY * unit;
+      const notch = e.deltaMode !== 0 || (Math.abs(e.deltaY) >= 50 && e.deltaX === 0); // a mouse-wheel click
+      if (e.ctrlKey || e.metaKey) {
+        const factor = notch ? (dy < 0 ? 1.12 : 1 / 1.12) : Math.exp(-dy * 0.004); // gentle on trackpads
+        zoomBy(factor, e.clientX, e.clientY);
+        return;
+      }
+      if (e.shiftKey && !dx) { dx = dy; dy = 0; } // Shift + mouse wheel scrolls sideways
+      if (notch) stage.scrollBy({ left: dx, top: dy, behavior: 'smooth' }); // glide for mouse wheels
+      else { stage.scrollLeft += dx; stage.scrollTop += dy; }               // trackpads: follow fingers 1:1
     }, { passive: false });
-    stage.addEventListener('dblclick', () => zoom(state && state.zoom > 1 ? 0 : 3)); // double-click: 2x / fit
+    // Safari sends trackpad pinches as gesture events instead.
+    let gestureStart = 1;
+    stage.addEventListener('gesturestart', (e) => { e.preventDefault(); gestureStart = state ? state.zoom : 1; });
+    stage.addEventListener('gesturechange', (e) => { e.preventDefault(); setZoom(gestureStart * e.scale, e.clientX, e.clientY); });
+    stage.addEventListener('dblclick', (e) => setZoom(state && state.zoom > 1.01 ? 1 : 2, e.clientX, e.clientY)); // 2x / fit
     window.addEventListener('keydown', (e) => {
       if (!state || state.vr) return;
       if (e.key === 'Escape') { close(); e.preventDefault(); }
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { go(1); e.preventDefault(); }
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') { go(-1); e.preventDefault(); }
-      if (e.key === '+' || e.key === '=') { zoom(1); e.preventDefault(); }
-      if (e.key === '-' || e.key === '_') { zoom(-1); e.preventDefault(); }
-      if (e.key === '0') { zoom(0); e.preventDefault(); }
+      if (e.key === '+' || e.key === '=') { zoomBy(1.25); e.preventDefault(); }
+      if (e.key === '-' || e.key === '_') { zoomBy(1 / 1.25); e.preventDefault(); }
+      if (e.key === '0') { setZoom(1); e.preventDefault(); }
     });
     let t;
     window.addEventListener('resize', () => {
       clearTimeout(t);
-      t = setTimeout(() => { if (state && !state.vr) renderDom(); }, 150);
+      t = setTimeout(() => { if (state && !state.vr) renderDom('resize'); }, 150);
     });
     dom = root;
     return root;
@@ -94,27 +113,59 @@ window.PdfReader = (() => {
   }
 
   let renderToken = 0;
-  async function renderDom() {
+
+  function updateZoomUi() {
+    const z = state.zoom;
+    dom.querySelector('.pr-zoom-fit').textContent = z < 1.01 ? 'Fit' : `${Math.round(z * 100)}%`;
+    dom.querySelector('.pr-zoom-out').disabled = z <= ZOOM_MIN + 0.001;
+    dom.querySelector('.pr-zoom-in').disabled = z >= ZOOM_MAX - 0.001;
+  }
+
+  // Zoom smoothly: resize the page straight away (keeping the point under the pointer still),
+  // then redraw it sharp a moment after zooming stops.
+  function setZoom(z, ax, ay) {
+    if (!state || state.vr || !state.fit) return;
+    z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+    if (Math.abs(z - state.zoom) < 1e-4) return;
+    const stage = dom.querySelector('.pr-stage');
+    const canvas = dom.querySelector('#pr-canvas');
+    const sr = stage.getBoundingClientRect();
+    if (ax === undefined) { ax = sr.left + stage.clientWidth / 2; ay = sr.top + stage.clientHeight / 2; }
+    const oldW = canvas.offsetWidth || 1, oldH = canvas.offsetHeight || 1;
+    const fx = (stage.scrollLeft + (ax - sr.left) - canvas.offsetLeft) / oldW;  // spot on the page under the pointer
+    const fy = (stage.scrollTop + (ay - sr.top) - canvas.offsetTop) / oldH;
+    state.zoom = z;
+    const w = state.fit.w * z, h = state.fit.h * z;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    stage.scrollLeft = canvas.offsetLeft + fx * w - (ax - sr.left);
+    stage.scrollTop = canvas.offsetTop + fy * h - (ay - sr.top);
+    updateZoomUi();
+    clearTimeout(sharpenTimer);
+    sharpenTimer = setTimeout(() => renderDom('sharpen'), 220);
+  }
+  const zoomBy = (f, ax, ay) => { if (state) setZoom(state.zoom * f, ax, ay); };
+
+  // mode: 'page' (new page: start at the top), 'sharpen' (same size, crisper), 'resize' (window changed)
+  async function renderDom(mode = 'page') {
     const token = ++renderToken;
     const { doc, page } = state;
     const root = buildDom();
     root.querySelector('#pr-count').textContent = `Page ${page} of ${doc.numPages}`;
     root.querySelector('.pr-prev').disabled = page <= 1;
     root.querySelector('.pr-next').disabled = page >= doc.numPages;
-    root.querySelector('.pr-zoom-fit').textContent = state.zoom === 1 ? 'Fit' : `${Math.round(state.zoom * 100)}%`;
-    root.querySelector('.pr-zoom-out').disabled = state.zoom <= ZOOMS[0];
-    root.querySelector('.pr-zoom-in').disabled = state.zoom >= ZOOMS[ZOOMS.length - 1];
+    updateZoomUi();
     const stage = root.querySelector('.pr-stage');
-    // Remember which part of the page is in the middle, to keep it there after zooming.
     const cx = stage.scrollWidth > stage.clientWidth ? (stage.scrollLeft + stage.clientWidth / 2) / stage.scrollWidth : 0.5;
     const cy = stage.scrollHeight > stage.clientHeight ? (stage.scrollTop + stage.clientHeight / 2) / stage.scrollHeight : 0.5;
     const loading = root.querySelector('.pr-loading');
-    loading.hidden = false;
+    if (mode === 'page') loading.hidden = false;
     const p = await doc.getPage(page);
     if (token !== renderToken) return;
     const base = p.getViewport({ scale: 1 });
     const pad = 24; // stage padding
     const fit = Math.min((stage.clientWidth - pad) / base.width, (stage.clientHeight - pad) / base.height);
+    state.fit = { w: base.width * fit, h: base.height * fit };
     const cssScale = fit * state.zoom;
     // Sharp on high-DPI screens, but cap the canvas size (big zooms can get huge).
     let dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -133,17 +184,17 @@ window.PdfReader = (() => {
     const canvas = root.querySelector('#pr-canvas');
     canvas.width = off.width;
     canvas.height = off.height;
-    canvas.style.width = `${Math.round(off.width / dpr)}px`;
-    canvas.style.height = `${Math.round(off.height / dpr)}px`;
+    canvas.style.width = `${state.fit.w * state.zoom}px`;
+    canvas.style.height = `${state.fit.h * state.zoom}px`;
     canvas.getContext('2d').drawImage(off, 0, 0);
     loading.hidden = true;
-    if (state.keepView) {
+    if (mode === 'resize') {
       stage.scrollLeft = cx * stage.scrollWidth - stage.clientWidth / 2;
       stage.scrollTop = cy * stage.scrollHeight - stage.clientHeight / 2;
-    } else {
+    } else if (mode === 'page') {
       stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
       stage.scrollTop = 0; // new page: start at the top
-    }
+    } // 'sharpen': leave the view exactly where it is
   }
 
   // ---------------------------------------------------------------- VR
@@ -262,23 +313,18 @@ window.PdfReader = (() => {
     const next = Math.min(state.doc.numPages, Math.max(1, state.page + dir));
     if (next === state.page) return;
     state.page = next;
-    state.keepView = false;
-    if (state.vr) renderVr(); else renderDom();
+    if (state.vr) renderVr(); else renderDom('page');
   }
 
-  // dir: +1 zoom in, -1 zoom out, 0 back to fit (or a ZOOMS index when > 1, e.g. 3 = 2x).
+  // Buttons / keys. PC: smooth zoom steps; VR: resize the floating page in steps.
   function zoom(dir) {
     if (!state) return;
-    const steps = state.vr ? VR_ZOOMS : ZOOMS;
-    let i = steps.indexOf(state.zoom);
-    if (i < 0) i = steps.indexOf(1);
-    let next;
-    if (dir === 0) next = state.vr ? 1 : 1;
-    else if (dir > 1 && !state.vr) next = ZOOMS[Math.min(ZOOMS.length - 1, dir)];
-    else next = steps[Math.min(steps.length - 1, Math.max(0, i + dir))];
+    if (!state.vr) { if (dir === 0) setZoom(1); else zoomBy(dir > 0 ? 1.25 : 1 / 1.25); return; }
+    let i = VR_ZOOMS.indexOf(state.zoom);
+    if (i < 0) i = VR_ZOOMS.indexOf(1);
+    const next = dir === 0 ? 1 : VR_ZOOMS[Math.min(VR_ZOOMS.length - 1, Math.max(0, i + dir))];
     if (next === state.zoom) return;
     state.zoom = next;
-    state.keepView = true;
     if (state.vr) {
       vrEl.object3D.scale.setScalar(next);
       vrEl._zoomLabel.setAttribute('text', 'value', `${Math.round(next * 100)}%`);
@@ -291,7 +337,7 @@ window.PdfReader = (() => {
   function open({ doc, page = 1, title = '', subtitle = '', description = '', onPage = null }) {
     if (state) close();
     const scene = document.querySelector('a-scene');
-    state = { doc, page: Math.min(Math.max(1, page), doc.numPages), onPage, title, vr: scene.is('vr-mode'), zoom: 1, keepView: false };
+    state = { doc, page: Math.min(Math.max(1, page), doc.numPages), onPage, title, vr: scene.is('vr-mode'), zoom: 1 };
     if (state.vr) {
       buildVr();
       renderVr();
@@ -306,7 +352,7 @@ window.PdfReader = (() => {
     root.hidden = false;
     freezePlayer(true);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    requestAnimationFrame(renderDom); // after layout, so the page fits the stage
+    requestAnimationFrame(() => renderDom('page')); // after layout, so the page fits the stage
   }
 
   function close() {
