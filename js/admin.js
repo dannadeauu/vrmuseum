@@ -490,7 +490,9 @@
     while (el && el !== scene && !(el.dataset && el.dataset.itemId)) el = el.parentEl;
     if (!el || el === scene) return;
     const items = await MuseumStore.allItems();
-    const rec = items.find((r) => r.id === el.dataset.itemId);
+    // Items that are always there (avatar station, info desk) may not be saved yet: use the
+    // version on screen; the first move or edit saves it.
+    const rec = items.find((r) => r.id === el.dataset.itemId) || MuseumItems.builtRecord(el.dataset.itemId);
     if (rec) select(rec);
   }
 

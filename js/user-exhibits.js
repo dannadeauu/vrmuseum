@@ -902,7 +902,7 @@ window.MuseumItems = (() => {
     {
       // Info desk in the bay to the left of the "VR MUSEUM" sign (south wall), facing the centre.
       id: 'starter-info-desk', kind: 'infodesk', title: 'Info desk',
-      link: 'https://en.wikipedia.org/wiki/Virtual_reality', signText: 'Info Zone',
+      link: 'https://en.wikipedia.org/wiki/Virtual_reality', signText: 'INFORMATION',
       position: { x: 3.6, y: 0, z: 6.24 }, rotationY: -150, size: 1.4
     },
     { id: 'starter-bench-west', kind: 'bench', position: { x: -4.2, y: 0, z: 0 }, rotationY: 90, size: 2.4, title: 'Bench' },
@@ -1041,6 +1041,12 @@ window.MuseumItems = (() => {
     remove(id);
   }
 
+  // The version of an item now on screen (also for ones never saved, like a default desk).
+  function builtRecord(id) {
+    const json = lastBuilt.get(id);
+    return json ? JSON.parse(json) : null;
+  }
+
   function clearScene() {
     buildToken.clear();
     lastBuilt.clear();
@@ -1054,6 +1060,6 @@ window.MuseumItems = (() => {
   return {
     build, find, discard, clearScene, loadAll, restoreStarters, inspect, kindOf, forgetFile, floorCenterY,
     signAspect, SIGN_STYLES, LAYOUT_VERSION, prepareLocal: ensureStarters, inspectLink, seedOnline,
-    FLAT_KINDS, FLOOR_KINDS, PLINTH_H, ALWAYS_THERE
+    FLAT_KINDS, FLOOR_KINDS, PLINTH_H, ALWAYS_THERE, builtRecord
   };
 })();
