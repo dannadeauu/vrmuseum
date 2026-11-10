@@ -431,18 +431,173 @@ window.MuseumItems = (() => {
     return floorPiece(r, knot, r.size / 2);
   }
 
-  // A plain bench; `size` is its length.
+  // ---------- bench: a "waterfall" bench of laminated pine, the same wood as the floor ----------
+  // A thick slab whose ends turn down into two full-depth legs. `size` is its length.
+  const BENCH_H = 0.45, BENCH_D = 0.4, BENCH_T = 0.09; // height, depth, slab/leg thickness (metres)
+
+  // Seamless 1 m x 1 m tile of glued-up pine strips running along u, coloured like the floor planks.
+  let benchWoodTex;
+  function benchWood() {
+    if (benchWoodTex) return benchWoodTex;
+    const { canvas, rng } = window.MuseumArch;
+    const S = 1024, strips = 26, sw = S / strips;
+    const [c, g] = canvas(S, S);
+    const r = rng(5150);
+    g.fillStyle = '#ddbb87';
+    g.fillRect(0, 0, S, S);
+    for (let k = 0; k < strips; k++) {
+      const y = k * sw;
+      let x = -r() * S;
+      while (x < S) {
+        const len = (0.9 + r() * 1.6) * S;
+        const col = `hsl(${33 + r() * 6}, ${50 + r() * 12}%, ${71 + r() * 8}%)`;
+        const grains = Array.from({ length: 5 }, () => [1.5 + r() * (sw - 3), (r() - 0.5) * 5, (r() - 0.5) * 5, 0.07 + r() * 0.1]);
+        const knots = Array.from({ length: Math.floor(r() * 2.4) }, () => [r() * len, 2 + r() * 5]);
+        for (const off of [0, -S, S]) { // draw again shifted so strips wrap seamlessly
+          const px = x + off;
+          if (px > S || px + len < 0) continue;
+          g.fillStyle = col;
+          g.fillRect(px, y, len, sw);
+          grains.forEach(([gy, a, b, alpha]) => {
+            g.strokeStyle = `rgba(150,95,40,${alpha})`;
+            g.lineWidth = 1.1;
+            g.beginPath();
+            g.moveTo(px, y + gy);
+            g.bezierCurveTo(px + len * 0.3, y + gy + a, px + len * 0.7, y + gy + b, px + len, y + gy);
+            g.stroke();
+          });
+          knots.forEach(([kx, kr]) => { // small dark pin knots, as in douglas fir
+            g.fillStyle = 'rgba(120,72,30,0.55)';
+            g.beginPath(); g.ellipse(px + kx, y + sw / 2, kr * 1.6, kr, 0, 0, Math.PI * 2); g.fill();
+          });
+          g.fillStyle = 'rgba(110,70,30,0.3)';
+          g.fillRect(px + len - 1, y, 1.2, sw); // finger joint
+        }
+        x += len;
+      }
+      g.fillStyle = 'rgba(110,70,30,0.22)';
+      g.fillRect(0, y, S, 1); // glue line
+    }
+    benchWoodTex = new THREE.CanvasTexture(c);
+    benchWoodTex.colorSpace = THREE.SRGBColorSpace;
+    benchWoodTex.wrapS = benchWoodTex.wrapT = THREE.RepeatWrapping;
+    benchWoodTex.anisotropy = 4;
+    return benchWoodTex;
+  }
+
+  // One box of the bench, with UVs in metres (grain along `grain`: 'x' or 'y') and baked
+  // ambient occlusion in its vertex colours.
+  function benchPart(w, h, d, cx, cy, grain, occlusion) {
+    const geo = new THREE.BoxGeometry(w, h, d, Math.max(1, Math.round(w / 0.05)), Math.max(1, Math.round(h / 0.03)), 6);
+    geo.translate(cx, cy, 0);
+    const pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv;
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const nx = nor.getX(i), ny = nor.getY(i);
+      // Face axes: pick the in-face coordinate that runs along the grain for u.
+      let u, v;
+      if (Math.abs(nx) > 0.5) { u = grain === 'y' ? y : z; v = grain === 'y' ? z : y; }
+      else if (Math.abs(ny) > 0.5) { u = x; v = z; }
+      else { u = grain === 'y' ? y : x; v = grain === 'y' ? x : y; }
+      uv.setXY(i, u + 0.37, v + 0.11);
+      const o = occlusion(x, y, z, nx, ny);
+      colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = o;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }
+
+  function benchMesh(L) {
+    const H = BENCH_H, T = BENCH_T, D = BENCH_D;
+    const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    const mix = (a, b, t) => a + (b - a) * t;
+    const inner = L / 2 - T;   // x of the legs' inner faces
+    const under = H - T;       // height of the slab's underside
+    // Ambient occlusion for a point on the bench (local metres) with face normal (nx, ny).
+    const occlusion = (x, y, z, nx, ny) => {
+      // At the floor the leg takes the floor shadow's shade, fading out up the leg, so the two blend.
+      let o = mix(1 - 0.75 * benchShadowAlpha(L, x, z), 1, smooth(0, 0.2, y));
+      const edge = mix(0.85, 1, smooth(0, 0.05, D / 2 - Math.abs(z)));      // the open front/back let light in
+      if (ny < -0.5 && y < H - T / 2) {                                     // slab underside
+        o *= 0.42 * mix(0.7, 1, smooth(0, 0.25, inner - Math.abs(x))) / edge;
+        o *= mix(1.25, 1, smooth(0, 0.08, D / 2 - Math.abs(z)));
+      } else if (Math.abs(nx) > 0.5 && Math.abs(x) < inner + 0.001 && Math.sign(nx) === -Math.sign(x)) { // legs' inner faces
+        o *= 0.6 * mix(0.72, 1, smooth(0, 0.22, under - y)) * edge;
+      } else if (Math.abs(nx) < 0.5 && Math.abs(ny) < 0.5 && Math.abs(x) < inner && y < under + 0.001) {
+        o *= 0.75; // inner edges of the legs seen from the front
+      }
+      if (ny > 0.5) o = 1;                                                  // top face: open to the sky
+      return Math.min(1, o);
+    };
+    const parts = [
+      benchPart(L, T, D, 0, H - T / 2, 'x', occlusion),                           // seat slab
+      benchPart(T, H - T, D, -L / 2 + T / 2, (H - T) / 2, 'y', occlusion),   // left leg
+      benchPart(T, H - T, D, L / 2 - T / 2, (H - T) / 2, 'y', occlusion)     // right leg
+    ];
+    const mat = new THREE.MeshStandardMaterial({ map: benchWood(), vertexColors: true, roughness: 0.82, metalness: 0 });
+    const group = new THREE.Group();
+    parts.forEach((geo) => group.add(new THREE.Mesh(geo, mat)));
+    return group;
+  }
+
+  // Contact shadow baked for the bench's footprint: tight and dark under the legs, a soft
+  // shade under the seat, fading out around it. Multiplied onto the floor.
+  // How dark the bench's shadow is on the floor at (x, z), bench-local metres (0..0.85 alpha).
+  // Shared by the floor shadow and the base of the legs, so the two meet without a seam.
+  const boxDist = (x, z, bx, hx, hz) => Math.hypot(Math.max(Math.abs(x - bx) - hx, 0), Math.max(Math.abs(z) - hz, 0));
+  function benchShadowAlpha(L, x, z) {
+    const dl = Math.min(boxDist(x, z, -L / 2 + BENCH_T / 2, BENCH_T / 2, BENCH_D / 2),
+                        boxDist(x, z, L / 2 - BENCH_T / 2, BENCH_T / 2, BENCH_D / 2));
+    const legs = 0.32 * Math.exp(-dl / 0.07) + 0.18 * Math.exp(-dl / 0.2);
+    const ds = boxDist(x, z, 0, L / 2, BENCH_D / 2);
+    const depthIn = Math.min(L / 2 - Math.abs(x), BENCH_D / 2 - Math.abs(z)); // >0 under the seat
+    const seat = ds > 0 ? 0.42 * Math.exp(-ds / 0.14) : 0.42 + 0.2 * Math.min(1, depthIn / 0.15);
+    return Math.min(0.85, 1 - (1 - Math.min(1, legs)) * (1 - seat));
+  }
+
+  const benchShadowTex = {};
+  function benchShadow(L) {
+    const key = L.toFixed(2);
+    if (benchShadowTex[key]) return benchShadowTex[key];
+    const pad = 0.45, W = L + pad * 2, Dd = BENCH_D + pad * 2, ppm = 128;
+    const cw = Math.round(W * ppm), ch = Math.round(Dd * ppm);
+    const c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    const g = c.getContext('2d');
+    const img = g.createImageData(cw, ch);
+    for (let j = 0; j < ch; j++) {
+      const z = (j + 0.5) / ppm - Dd / 2;
+      for (let i = 0; i < cw; i++) {
+        const x = (i + 0.5) / ppm - W / 2;
+        const a = benchShadowAlpha(L, x, z);
+        const o = (j * cw + i) * 4;
+        img.data[o] = 28; img.data[o + 1] = 17; img.data[o + 2] = 6;
+        img.data[o + 3] = Math.round(a * 255);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return (benchShadowTex[key] = { tex, W, D: Dd });
+  }
+
   function buildBench(r) {
     const el = baseEntity(r);
-    const seat = document.createElement('a-box');
-    seat.classList.add('outline-target', 'clickable');
-    seat.setAttribute('width', r.size);
-    seat.setAttribute('height', 0.44);
-    seat.setAttribute('depth', 0.6);
-    seat.setAttribute('position', '0 0.22 0');
-    seat.setAttribute('color', '#3a2f27');
-    el.appendChild(seat);
-    addShadow(el, r.size + 0.2, 0.8);
+    const L = Math.max(0.6, r.size);
+    const body = document.createElement('a-entity');
+    body.classList.add('outline-target', 'clickable');
+    body.setObject3D('mesh', benchMesh(L));
+    el.appendChild(body);
+
+    const { tex, W, D } = benchShadow(L);
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(W, D),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.y = 0.006;
+    sh.renderOrder = 1;
+    sh.raycast = () => {}; // not a click target
+    el.object3D.add(sh);
     return el;
   }
 
