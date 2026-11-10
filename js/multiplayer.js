@@ -16,7 +16,12 @@
   const HEARTBEAT_MS = 2500;   // resend now and then even when still, so newcomers see you
   const STALE_MS = 15000;      // hide a robot that hasn't been heard from for this long (and has left presence)
   const LEAVE_GRACE_MS = 10000; // keep a robot this long after it drops out of presence, in case it's back
-  const PRESENCE_POSE_MS = 4000; // how often your position is also saved in presence while you move
+  // Supabase limits how often one visitor may update presence: going over it (about 6 updates in
+  // 20 s) closes the channel, which is what stopped multiplayer after a few avatar changes. Presence
+  // updates are spaced out and merged; name and look changes also go out at once as broadcasts.
+  const TRACK_GAP_MS = 15000;      // at most one presence update per this long
+  const PRESENCE_POSE_MS = 30000;  // how often your position is also saved in presence while you move
+  const REJOIN_MS = [2000, 5000, 10000, 20000, 30000]; // rejoin delays if the server closes the channel
   const BUBBLE_MS = 7000;      // how long a chat bubble stays above a robot
   const MAX_CHAT = 200;        // characters per message
   // People in the museum at once (logged-in admins don't count). Set in js/supabase-config.js.
@@ -442,6 +447,7 @@
       myName = cleanName(nameInput.value) || myName;
       nameInput.value = myName;
       store.set('museum-visitor-name', myName);
+      sendMeta();
       track();
     });
     wrap.querySelector('#chat-toggle').addEventListener('click', (e) => {
@@ -567,7 +573,7 @@
   }
 
   // ---------- realtime ----------
-  let channel, track;
+  let channel, track, sendMeta = () => {};
   let myPose = null;   // my latest position (also saved in presence)
   let trackedAt = 0;   // when presence was last updated
   let trackedPose = null; // the position presence has
@@ -591,31 +597,47 @@
     let joinedAt = 0;
     const syncWaiters = [];       // run on every presence update (room checks)
 
-    channel = online.sb.channel('museum-lobby', {
-      config: { presence: { key: myId }, broadcast: { self: false } }
-    });
+    // Handlers are collected here and attached to the channel each time it's (re)opened.
+    const handlers = [];
+    const on = (type, filter, fn) => handlers.push([type, filter, fn]);
 
     // Presence holds who is here, their look and their last position. The position is also
     // streamed as fast 'pose' broadcasts, but those can pause (a computer tab in the background,
     // a headset busy entering VR), so presence keeps everyone visible where they were last seen.
-    track = () => {
+    const trackNow = () => {
+      clearTimeout(trackTimer);
+      trackTimer = null;
+      if (!channel || !present) return;
       trackedAt = performance.now();
       trackedPose = myPose;
-      return channel.track({
+      channel.track({
         name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device,
         hue: myLook.hue, hat: myLook.hat, eyes: myLook.eyes,
         ...(myPose ? { h: myPose.h, yaw: myPose.yaw, pitch: myPose.pitch } : {})
       });
     };
+    // Rate-limited: several requests close together become one update.
+    let trackTimer = null;
+    track = () => {
+      if (trackTimer) return; // one is already scheduled, and it will carry the latest state
+      const wait = Math.max(0, trackedAt + TRACK_GAP_MS - performance.now());
+      if (!trackedAt || wait === 0) trackNow();
+      else trackTimer = setTimeout(trackNow, wait);
+    };
+    // Name and look go out straight away as a broadcast (not rate-limited like presence).
+    sendMeta = () => {
+      if (!channel || !present) return;
+      channel.send({ type: 'broadcast', event: 'meta', payload: { id: myId, name: myName, hue: myLook.hue, hat: myLook.hat, eyes: myLook.eyes } });
+    };
     // Changed look at the avatar station: everyone sees the new robot right away.
     lookListeners.push(() => {
       myColour = hueColour(myLook.hue);
-      if (isPresent) track();
+      if (isPresent) { sendMeta(); track(); }
     });
 
     // ---- the 10-visitor limit ----
     // Visitors who count: everyone present except logged-in admins.
-    const counted = () => Object.entries(channel.presenceState()).filter(([, m]) => m[0] && !m[0].admin);
+    const counted = () => Object.entries(channel ? channel.presenceState() : {}).filter(([, m]) => m[0] && !m[0].admin);
     const othersInside = () => counted().filter(([id]) => id !== myId).length;
     // If two people take the last place at the same moment, the earlier arrival keeps it.
     const withinLimit = () => {
@@ -626,7 +648,7 @@
       return i === -1 || i < MAX_VISITORS;
     };
 
-    channel.on('presence', { event: 'sync' }, () => {
+    on('presence', { event: 'sync' }, () => {
       const state = channel.presenceState();
       const ids = Object.keys(state);
       if (chatCount) chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
@@ -649,7 +671,7 @@
       }
     });
     // A name change arrives as leave + join for the same visitor: report it as a rename.
-    channel.on('presence', { event: 'join' }, ({ key, newPresences }) => {
+    on('presence', { event: 'join' }, ({ key, newPresences }) => {
       if (key === myId || !newPresences[0]) return;
       const name = cleanName(newPresences[0].name) || 'Someone';
       const known = peers.get(key);
@@ -661,14 +683,14 @@
         systemLine(`${name} joined${dev ? ` (on a ${dev})` : ''}`);
       }
     });
-    channel.on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+    on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
       if (key === myId || !leftPresences[0]) return;
       if (channel.presenceState()[key]) return; // still here (renamed)
       announced.delete(key);
       systemLine(`${cleanName(leftPresences[0].name) || 'Someone'} left`);
     });
 
-    channel.on('broadcast', { event: 'pose' }, ({ payload }) => {
+    on('broadcast', { event: 'pose' }, ({ payload }) => {
       if (!payload || payload.id === myId || !Array.isArray(payload.h)) return;
       const p = ensurePeer(payload.id);
       p.target = { x: payload.h[0], y: payload.h[1], z: payload.h[2], yaw: payload.yaw || 0, pitch: payload.pitch || 0 };
@@ -677,8 +699,13 @@
       if (!p.robot.root.visible) { Object.assign(p.cur, p.target); p.robot.root.visible = true; }
     });
 
+    on('broadcast', { event: 'meta' }, ({ payload }) => {
+      if (!payload || payload.id === myId || typeof payload.id !== 'string') return;
+      ensurePeer(payload.id, { name: payload.name, hue: payload.hue, hat: payload.hat, eyes: payload.eyes });
+    });
+
     const recent = new Map(); // sender -> timestamps (simple flood guard)
-    channel.on('broadcast', { event: 'chat' }, ({ payload }) => {
+    on('broadcast', { event: 'chat' }, ({ payload }) => {
       if (!payload || payload.id === myId) return;
       const text = String(payload.text || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_CHAT);
       if (!text) return;
@@ -694,7 +721,7 @@
 
     let lastSent = 0;
     onSend = (text) => {
-      if (!isPresent) return false; // waiting outside a full museum
+      if (!isPresent || !channel) return false; // waiting outside a full museum, or reconnecting
       const now = Date.now();
       if (now - lastSent < 800) return false; // gentle rate limit
       lastSent = now;
@@ -743,6 +770,7 @@
       present = true;
       setPresent(true);
       track();
+      sendMeta();
     }
 
     let subscribed;
@@ -751,13 +779,33 @@
     const firstSyncOnce = new Promise((res) => { firstSync = res; setTimeout(res, 4000); });
     syncWaiters.push(() => firstSync());
 
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        subscribed();
-        if (present) track(); // reconnected: show up again
-      }
-      if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && chatLog) systemLine('Chat connection problem, retrying…');
-    });
+    // Open (or reopen) the lobby channel. If the server closes it (a rate limit, a restart),
+    // join again after a pause instead of silently staying disconnected.
+    let rejoins = 0;
+    function openChannel() {
+      const ch = online.sb.channel('museum-lobby', {
+        config: { presence: { key: myId }, broadcast: { self: false } }
+      });
+      channel = ch;
+      handlers.forEach(([type, filter, fn]) => ch.on(type, filter, fn));
+      ch.subscribe((status, err) => {
+        if (ch !== channel) return; // an old channel we've replaced
+        if (status === 'SUBSCRIBED') {
+          rejoins = 0;
+          subscribed();
+          if (present) { trackedAt = 0; track(); sendMeta(); } // (re)joined: show up again
+        }
+        if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && chatLog) systemLine('Chat connection problem, retrying…');
+        if (status === 'CLOSED') {
+          console.warn('Museum lobby channel closed; rejoining.', err || '');
+          if (chatLog) systemLine('Reconnecting…');
+          channel = null;
+          online.sb.removeChannel(ch).catch(() => {});
+          setTimeout(openChannel, REJOIN_MS[Math.min(rejoins++, REJOIN_MS.length - 1)]);
+        }
+      });
+    }
+    openChannel();
 
     // Entry: check there's room, ask for a nickname, then appear to everyone.
     await subscribedOnce;
