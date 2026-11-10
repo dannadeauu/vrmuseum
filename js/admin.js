@@ -16,11 +16,11 @@
   const DEFAULT_SIZE = { image: 1.6, pdf: 0.9, model: 0.8 };
   const SIZE_RANGE = {
     image: [0.3, 4], pdf: [0.3, 2.5], model: [0.2, 3],
-    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8], customizer: [1, 1], infodesk: [1.4, 1.4]
+    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8], whiteboard: [0.6, 3.5], customizer: [1, 1], infodesk: [1.4, 1.4]
   };
   const KIND_LABEL = {
     image: 'Image', pdf: 'PDF', model: '3D model',
-    placeholder: 'Painting (starter)', knot: 'Sculpture (starter)', bench: 'Bench', sign: 'Sign',
+    placeholder: 'Painting (starter)', knot: 'Sculpture (starter)', bench: 'Bench', sign: 'Sign', whiteboard: 'Whiteboard',
     customizer: 'Avatar station (can be moved, not deleted)',
     infodesk: 'Info desk (can be moved, not deleted)'
   };
@@ -80,7 +80,17 @@
         <input id="admin-link" type="text" placeholder="assets/statue.glb or https://…" aria-label="File path or address">
         <button type="submit" class="admin-btn">Add from link</button>
       </form>
-      <button type="button" class="admin-btn admin-wide" data-act="add-sign">Add sign</button>
+      <button type="button" class="admin-btn admin-wide" data-act="library" aria-expanded="false" aria-controls="admin-library">Asset library</button>
+      <section id="admin-library" hidden>
+        <p class="admin-hint">Click an asset, then click a wall to hang it or the floor to stand it up.</p>
+        <div class="admin-assets">
+          ${ASSETS.map((a) => `
+            <button type="button" class="admin-asset" data-asset="${a.id}" title="${a.label}">
+              <span class="admin-asset-thumb">${a.thumb}</span>
+              <span class="admin-asset-label">${a.label}<small>${a.note}</small></span>
+            </button>`).join('')}
+        </div>
+      </section>
       <p class="admin-hint">Images: PNG, JPG, WebP. 3D: .glb (or a self-contained .gltf). "Add from link" uses a file already on the website (for example in the GitHub repo's assets folder) without uploading it.</p>
 
       <section id="admin-editor" hidden>
@@ -113,6 +123,7 @@
         <label data-show="hover" class="admin-check"><input id="ed-hover" type="checkbox"> Hover</label>
         <label data-show="spin" class="admin-check"><input id="ed-spin" type="checkbox"> Slowly rotate</label>
         <label data-show="stand" class="admin-check"><input id="ed-stand" type="checkbox"> On a display stand</label>
+        <button type="button" class="admin-btn admin-wide" data-act="clear-board" data-show="board">Clear the drawing</button>
         <div class="admin-row">
           <button type="button" class="admin-btn" data-act="move">Move</button>
           <button type="button" class="admin-btn admin-danger" data-act="delete" data-show="delete">Delete</button>
@@ -138,9 +149,15 @@
       if (act === 'delete') deleteSelected();
       if (act === 'deselect') select(null);
       if (act === 'export') exportLayout();
-      if (act === 'add-sign') addSign();
+      if (act === 'library') toggleLibrary();
+      const asset = e.target.closest('[data-asset]')?.dataset.asset;
+      if (asset) addAsset(asset);
       if (act === 'logout') logOut();
       if (act === 'restore') restoreStarters();
+      if (act === 'clear-board' && selected && selected.kind === 'whiteboard') {
+        window.MuseumBoards.clearBoard(selected.id);
+        status('Cleared the whiteboard for everyone.');
+      }
       // Give the keyboard back to the scene so WASD/space work right away.
       if (e.target.tagName === 'BUTTON') e.target.blur();
     });
@@ -534,6 +551,7 @@
       size: !MuseumItems.ALWAYS_THERE.includes(rec.kind),
       delete: !MuseumItems.ALWAYS_THERE.includes(rec.kind),
       sign: rec.kind === 'sign',
+      board: rec.kind === 'whiteboard',
       desk: rec.kind === 'infodesk'
     };
     editor.querySelectorAll('[data-show]').forEach((n) => { n.hidden = !show[n.dataset.show]; });
@@ -579,6 +597,7 @@
     if (!confirm(`Delete "${rec.title}" from the museum? ${note}`)) return;
     clearTimeout(saveTimer);
     select(null);
+    if (rec.kind === 'whiteboard') window.MuseumBoards.clearBoard(rec.id);
     MuseumItems.discard(rec.id);
     await MuseumStore.deleteItem(rec.id);
     const others = (await MuseumStore.allItems()).some((r) => r.fileId === rec.fileId);
@@ -600,6 +619,43 @@
       helper.visible = false;
     }
     requestAnimationFrame(trackSelection);
+  }
+
+  // ---------------- asset library ----------------
+  // Ready-made things admins can add. Each is placed like a picture: click a wall to hang it,
+  // or the floor to stand it up.
+  function boardThumb(w, h) {
+    const W = 64, H = 48, k = Math.min((W - 8) / w, (H - 8) / h), bw = w * k, bh = h * k;
+    return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><rect x="${(W - bw) / 2}" y="${(H - bh) / 2}" width="${bw}" height="${bh}"
+      rx="1.5" fill="#fff" stroke="#b7bbc1" stroke-width="3"/><path d="M${W / 2 - bw / 4} ${H / 2 + 2} q ${bw / 8} -${bh / 4} ${bw / 4} 0 t ${bw / 4} 0"
+      fill="none" stroke="#2563d9" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  const ASSETS = [
+    { id: 'whiteboard-3x4', label: 'Whiteboard 3:4', note: 'Portrait', thumb: boardThumb(3, 4) },
+    { id: 'whiteboard-4x3', label: 'Whiteboard 4:3', note: 'Landscape', thumb: boardThumb(4, 3) },
+    { id: 'whiteboard-1x1', label: 'Whiteboard 1:1', note: 'Square', thumb: boardThumb(1, 1) },
+    { id: 'sign', label: 'Sign', note: 'Lettered plate', thumb: '<svg viewBox="0 0 64 48" aria-hidden="true"><rect x="6" y="16" width="52" height="16" rx="1.5" fill="#2b2119"/><rect x="14" y="22" width="36" height="4" rx="1" fill="#d9b56c"/></svg>' }
+  ];
+  // width:height ratio and a starting width (metres) for each whiteboard.
+  const BOARDS = { 'whiteboard-3x4': [3, 4, 1.2], 'whiteboard-4x3': [4, 3, 1.8], 'whiteboard-1x1': [1, 1, 1.4] };
+
+  function toggleLibrary(open) {
+    const lib = $('#admin-library');
+    lib.hidden = open === undefined ? !lib.hidden : !open;
+    $('[data-act="library"]').setAttribute('aria-expanded', String(!lib.hidden));
+  }
+
+  function addAsset(id) {
+    if (id === 'sign') { addSign(); return; }
+    const spec = BOARDS[id];
+    if (!spec) return;
+    cancelPlacing();
+    select(null);
+    const [rw, rh, width] = spec;
+    startPlacing({
+      id: MuseumStore.newId(), kind: 'whiteboard', title: 'Whiteboard', artist: '', year: '', description: '',
+      mount: 'wall', stand: true, size: width, aspect: rh / rw, rotationY: 0, position: { x: 0, y: 0, z: 0 }
+    }, true);
   }
 
   // New sign: placed like a picture (click a wall, or the floor to put it on a stand).

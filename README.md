@@ -28,7 +28,11 @@ Open **http://localhost:8000/?admin** and click **Admin** in the top-left corner
 3. The new item is selected automatically. Edit its title, artist, year, description and size. Floor items also get rotation. Models have a **plinth** option, and standing images and PDFs have a **display stand** option, which is on by default; turned off, the piece rests on small feet. Changes save as you type.
 4. Click **any** piece to edit it, **Move** it, or **Delete** it. That includes the starter paintings, the sculpture and the benches.
 
-**Signs:** **Add sign** creates a sign lettered in Playfair Display. Hang it on a wall, or click the floor to stand it on a display stand. In the editor you can change the text (press Enter for more lines), the style (bronze, stone or navy plate, or letters only, dark or light), the size and the position. The "Virtual Museum" plate is a sign too, so it's editable. The font loads from Google Fonts; offline, signs fall back to Georgia.
+**Asset library:** click **Asset library** for ready-made things to add: whiteboards in three shapes (3:4 portrait, 4:3 landscape, 1:1 square) and signs. Click one, then click a wall to hang it or the floor to stand it up.
+
+**Whiteboards:** framed like a painting, with a plaque. Under the frame, every visitor gets colour swatches (black plus Ocean, Forrest, Skyline, Tangerine, Toffee and Salsa), an eraser, a brush-size slider (the dot beside it shows the size) and **Clear**. Draw by dragging with the mouse or a finger, or in VR by holding the trigger while pointing the laser. Online, drawings appear live for everyone and are saved, so people arriving later see them; Clear wipes the board for everyone. Admins can also clear a selected board from the editor, and deleting a board deletes its drawing. Saving drawings needs the `museum_board_strokes` table: if your museum was set up before whiteboards existed, run `supabase/setup.sql` again (until then, drawings are shared live but not kept). Offline, drawings are kept in this browser.
+
+**Signs:** **Sign** in the asset library creates a sign lettered in Playfair Display. Hang it on a wall, or click the floor to stand it on a display stand. In the editor you can change the text (press Enter for more lines), the style (bronze, stone or navy plate, or letters only, dark or light), the size and the position. The "Virtual Museum" plate is a sign too, so it's editable. The font loads from Google Fonts; offline, signs fall back to Georgia.
 
 **Info desk:** an angled white information desk under a glowing oval "INFORMATION" sign stands in the bay to the left of the "VR MUSEUM" sign. Visitors click its computer to browse a website in a window in the middle of the screen (in VR it leaves VR first). Click the desk in admin mode to change the **computer link** and the **sign text** (used on the hanging sign and the desk front), or to move and rotate it. Like the avatar station, it can't be deleted. Some websites refuse to be shown inside other sites; for those, visitors use **Open in new tab**.
 
@@ -56,6 +60,7 @@ With Supabase set up, everyone sees the same museum, and admin changes show up l
 - **Backups:** **Export layout** downloads the whole museum (exhibits plus uploaded files) as one file, and **Import layout** restores it. Importing always downloads a backup of the current museum first.
 - If the online museum can't be reached, editing pauses (nothing is saved only in one browser).
 - To add another admin, create the user (step 1), then run `supabase/setup.sql` again.
+- After updates that add tables (such as whiteboard drawings), run `supabase/setup.sql` again. It's safe to run any number of times.
 - If Supabase can't be reached, the museum falls back to the copy saved in the visitor's browser (or the starter exhibits), so it never shows an empty room.
 - Never put the **service_role / secret key** or your database password in these files.
 

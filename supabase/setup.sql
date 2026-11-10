@@ -8,7 +8,9 @@
 --   museum_meta    small settings (whether the layout has been published)
 --   museum_admins  which logged-in users may change the museum
 --   museum-files   a public storage bucket for uploaded images, PDFs and models
--- Everyone can VIEW. Only users listed in museum_admins can CHANGE anything.
+--   museum_board_strokes  drawings on whiteboards (one row per pen stroke)
+-- Everyone can VIEW. Only users listed in museum_admins can CHANGE anything,
+-- except whiteboards: every visitor may draw on them and clear them.
 -- =====================================================================
 
 -- ---------- tables ----------
@@ -98,6 +100,23 @@ begin
     alter publication supabase_realtime add table public.museum_items;
   end if;
 end $$;
+
+-- ---------- whiteboards: anyone can draw and clear ----------
+create table if not exists public.museum_board_strokes (
+  id          uuid primary key default gen_random_uuid(),
+  board_id    text not null,
+  stroke      jsonb not null check (octet_length(stroke::text) < 24000), -- one pen stroke
+  created_at  timestamptz not null default now()
+);
+create index if not exists museum_board_strokes_board on public.museum_board_strokes (board_id, created_at);
+alter table public.museum_board_strokes enable row level security;
+drop policy if exists "boards: anyone can view"  on public.museum_board_strokes;
+drop policy if exists "boards: anyone can draw"  on public.museum_board_strokes;
+drop policy if exists "boards: anyone can clear" on public.museum_board_strokes;
+create policy "boards: anyone can view"  on public.museum_board_strokes for select using (true);
+create policy "boards: anyone can draw"  on public.museum_board_strokes for insert to anon, authenticated with check (true);
+create policy "boards: anyone can clear" on public.museum_board_strokes for delete to anon, authenticated using (true);
+grant select, insert, delete on public.museum_board_strokes to anon, authenticated;
 
 -- ---------- file storage ----------
 insert into storage.buckets (id, name, public)

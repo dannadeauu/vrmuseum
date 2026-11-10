@@ -181,7 +181,9 @@ AFRAME.registerComponent('exhibit', {
     plaqueOffset: { default: '' }, // "x y z"; empty = auto (right of the piece)
     panelOffset: { default: '' },  // "x y z"; empty = auto (above the piece)
     panel: { default: true },       // false: clicking doesn't open the description panel (e.g. PDFs open a reader)
-    hint: { default: '' }           // plaque hint; empty = "(click / trigger for more)" when there's a description
+    hint: { default: '' },          // plaque hint; empty = "(click / trigger for more)" when there's a description
+    frameColor: { default: '#2b2119' },
+    hoverGrow: { default: true }    // false: don't swell on hover (e.g. whiteboards, which you draw on)
   },
 
   init() {
@@ -196,7 +198,7 @@ AFRAME.registerComponent('exhibit', {
       frame.setAttribute('height', h + 0.16);
       frame.setAttribute('depth', 0.06);
       frame.setAttribute('position', '0 0 -0.05'); // front face 2 cm behind the picture: no flicker at a distance
-      frame.setAttribute('color', '#2b2119');
+      frame.setAttribute('color', d.frameColor);
       el.appendChild(frame);
     }
 
@@ -235,8 +237,10 @@ AFRAME.registerComponent('exhibit', {
       if (!d.description || !d.panel) return; // nothing to show, or the piece handles clicks itself
       panel.setAttribute('visible', !panel.getAttribute('visible'));
     });
-    el.addEventListener('mouseenter', () => el.object3D.scale.setScalar(1.02));
-    el.addEventListener('mouseleave', () => el.object3D.scale.setScalar(1));
+    if (d.hoverGrow) {
+      el.addEventListener('mouseenter', () => el.object3D.scale.setScalar(1.02));
+      el.addEventListener('mouseleave', () => el.object3D.scale.setScalar(1));
+    }
   }
 });
 

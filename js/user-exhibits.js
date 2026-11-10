@@ -135,7 +135,9 @@ window.MuseumItems = (() => {
       artist: r.artist || '',
       year: r.year || '',
       description: r.description || ''
-    }, r.kind === 'pdf' ? { panel: false, hint: '(click / trigger to read)' } : {}, extra);
+    }, r.kind === 'pdf' ? { panel: false, hint: '(click / trigger to read)' } : {},
+    r.kind === 'whiteboard' ? { panel: false, hint: 'Pick a colour below and draw', frameColor: '#b7bbc1', hoverGrow: false } : {},
+    extra);
   }
 
   function baseEntity(r) {
@@ -158,7 +160,7 @@ window.MuseumItems = (() => {
     const h = r.size * (r.aspect || 1);
     if (!r.stand) return h / 2 + FRAME + 0.04; // resting on its small feet
     // On a stand: aim for eye level (~1.5 m), but keep a visible post and stay under ~2.6 m.
-    const minBottom = r.kind === 'pdf' ? 0.6 : 0.45;
+    const minBottom = r.kind === 'pdf' || r.kind === 'whiteboard' ? 0.6 : 0.45; // room for controls underneath
     const bottom = Math.min(1.2, Math.max(minBottom, 1.5 - h / 2));
     return bottom + h / 2;
   }
@@ -209,7 +211,7 @@ window.MuseumItems = (() => {
     addStand(el, r, w, h, cy);
     addShadow(el, w + 0.3, r.stand ? 0.7 : 0.45, -cy);
     const extra = {};
-    if (r.stand) {
+    if (r.stand && r.kind !== 'whiteboard') { // (a whiteboard's controls go there; its plaque stays to the right)
       // Plaque on the post, under the picture (and under the PDF page buttons).
       extra.plaqueOffset = `0 ${-h / 2 - FRAME - (pdf ? 0.45 : 0.28)} 0.01`;
     } else if (pdf) {
@@ -780,6 +782,17 @@ window.MuseumItems = (() => {
     return el;
   }
 
+  // Whiteboard: a framed board anyone can draw on (js/whiteboard.js), with colours, a brush-size
+  // slider and Clear in a row under the frame (or above it, when it rests on the floor on feet).
+  function buildWhiteboard(r) {
+    const el = flatEntity(r);
+    const h = r.size * (r.aspect || 1);
+    const y = !onFloor(r) ? -h / 2 - FRAME - 0.12
+      : r.stand ? -h / 2 - FRAME - 0.16   // under the stand's ledge
+        : h / 2 + FRAME + 0.12;           // no room underneath
+    return window.MuseumBoards.attach(el, r, y);
+  }
+
   // Starter paintings: generated abstract art (placeholder-art) until replaced.
   function buildPlaceholder(r) {
     const el = flatEntity(r);
@@ -822,7 +835,7 @@ window.MuseumItems = (() => {
     const make = {
       image: buildImage, pdf: buildPdf, model: buildModel,
       placeholder: buildPlaceholder, knot: buildKnot, bench: buildBench, sign: buildSign,
-      customizer: buildCustomizer, infodesk: (r) => window.InfoDesk.build(r, baseEntity)
+      customizer: buildCustomizer, whiteboard: buildWhiteboard, infodesk: (r) => window.InfoDesk.build(r, baseEntity)
     }[record.kind];
     if (!make) return null;
     const token = {};
@@ -1054,7 +1067,7 @@ window.MuseumItems = (() => {
     [...urls.keys()].forEach(forgetFile);
   }
 
-  const FLAT_KINDS = ['image', 'pdf', 'placeholder', 'sign'];     // hang on walls or stand on the floor
+  const FLAT_KINDS = ['image', 'pdf', 'placeholder', 'sign', 'whiteboard'];     // hang on walls or stand on the floor
   const FLOOR_KINDS = ['model', 'knot', 'bench', 'customizer', 'infodesk']; // always on the floor
 
   return {
