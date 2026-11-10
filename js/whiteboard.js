@@ -156,6 +156,17 @@ window.MuseumBoards = (() => {
     redraw(b);
   }
 
+  // Started offline, then connected: show the shared drawings instead of this browser's.
+  MuseumStore.onOnline(() => {
+    connect();
+    for (const b of boards.values()) {
+      b.strokes = []; b.live.clear();
+      history.delete(b.id);
+      b.loaded = loadStrokes(b);
+    }
+    notifyUi();
+  });
+
   function tableMissing(error) {
     if (!tableOk) return;
     tableOk = false;

@@ -240,7 +240,7 @@
     const configured = !!(window.MUSEUM_SUPABASE && window.MUSEUM_SUPABASE.url && window.MUSEUM_SUPABASE.key);
     if (!online && configured) {
       canEdit = false;
-      status("Can't reach the online museum right now, so editing is paused (changes couldn't be shared). Check your connection and reload.");
+      status("Can't reach the online museum right now, so editing is paused (changes couldn't be shared). It keeps trying to reconnect, and editing comes back by itself.");
     }
     $('#admin-mode-note').textContent = online
       ? 'Every change saves automatically and appears for all visitors right away.'
@@ -254,6 +254,9 @@
     if (adminOn && tools) scene.addState('admin-mode'); else scene.removeState('admin-mode');
     if (!tools) { cancelPlacing(); select(null); }
   }
+
+  // Started offline, then connected: unpause editing and show the login.
+  MuseumStore.onOnline(() => refreshAccess());
 
   async function logIn(e) {
     e.preventDefault();

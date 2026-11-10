@@ -1,0 +1,47 @@
+/* Offline notice (js/connection-notice.js). Top centre, above the scene. */
+#conn-notice {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 8px 10px 8px 14px;
+  border-radius: 10px;
+  background: rgba(20, 22, 30, 0.9);
+  color: #f2efe9;
+  border: 1px solid rgba(242, 239, 233, 0.2);
+  font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+#conn-notice[hidden] { display: none; }
+#conn-notice .conn-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff8a5c;
+}
+#conn-notice[data-kind="connecting"] .conn-dot { background: #ffb347; animation: conn-pulse 1s ease-in-out infinite alternate; }
+#conn-notice[data-kind="online"] .conn-dot { background: #5fd38d; }
+#conn-notice button {
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  background: #ffb347;
+  color: #1b1b1f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+#conn-notice button[hidden] { display: none; }
+@keyframes conn-pulse { from { opacity: 0.35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  #conn-notice[data-kind="connecting"] .conn-dot { animation: none; }
+}

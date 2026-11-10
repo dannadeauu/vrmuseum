@@ -135,32 +135,113 @@ function makeSupabaseStore({ url, key }) {
 window.MuseumStore = (() => {
   const local = window.MuseumLocalStore;
   const cfg = window.MUSEUM_SUPABASE;
+  const configured = !!(cfg && cfg.url && cfg.key);
   let active = local;
   let online = null;
   const listeners = [];
+  const onlineListeners = [];
+  const statusListeners = [];
+  let status = configured ? 'connecting' : 'local'; // 'connecting' | 'online' | 'offline' | 'local'
+  let lastError = null;
 
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+  const setStatus = (s) => { status = s; statusListeners.slice().forEach((f) => f(s, lastError)); };
 
-  const ready = (async () => {
-    if (!cfg || !cfg.url || !cfg.key) return;
-    if (!window.supabase) { console.warn('Supabase library did not load; using this browser\'s copy of the museum.'); return; }
-    try {
-      const s = makeSupabaseStore(cfg);
-      await withTimeout(s.ping(), 8000);
-      online = s;
-      active = s;
-      s.subscribe((ev) => listeners.forEach((f) => f(ev)));
-    } catch (err) {
-      console.warn('Supabase not reachable or not set up yet (run supabase/setup.sql); using this browser\'s copy.', err);
+  // The Supabase library comes from a CDN. If that script was blocked or timed out,
+  // try a second CDN before giving up on this attempt.
+  const LIB_FALLBACK = 'https://unpkg.com/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js';
+  let libLoading = null;
+  function loadLibrary() {
+    if (window.supabase) return Promise.resolve();
+    if (!libLoading) {
+      libLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = LIB_FALLBACK;
+        s.onload = () => (window.supabase ? resolve() : reject(new Error('Supabase library did not load')));
+        s.onerror = () => { s.remove(); reject(new Error('Supabase library did not load')); };
+        document.head.appendChild(s);
+      }).catch((err) => { libLoading = null; throw err; });
     }
+    return libLoading;
+  }
+
+  // One connection attempt. Quest headsets on busy Wi-Fi can be slow while the 3D scene loads,
+  // so each attempt gets a generous timeout.
+  async function attempt(ms) {
+    await withTimeout(loadLibrary(), ms);
+    const s = makeSupabaseStore(cfg);
+    await withTimeout(s.ping(), ms);
+    return s;
+  }
+
+  function goOnline(s) {
+    online = s;
+    active = s;
+    lastError = null;
+    s.subscribe((ev) => listeners.forEach((f) => f(ev)));
+    setStatus('online');
+  }
+
+  // First try: up to two attempts, then the museum opens from this browser's copy so nobody
+  // waits forever. Retrying carries on in the background, and when it connects every part of
+  // the museum switches over (exhibits, whiteboards, multiplayer, admin) without a reload.
+  const ready = (async () => {
+    if (!configured) return;
+    for (const ms of [10000, 8000]) {
+      try { goOnline(await attempt(ms)); return; } catch (err) { lastError = err; }
+    }
+    console.warn('Supabase not reachable or not set up yet (run supabase/setup.sql); using this browser\'s copy for now and retrying.', lastError);
+    setStatus('offline');
+    retryLater(0);
   })();
+
+  const RETRY_DELAYS = [5000, 10000, 15000, 30000]; // then every 30 s
+  let retryTimer = null;
+  function retryLater(n) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => retryNow(n), RETRY_DELAYS[Math.min(n, RETRY_DELAYS.length - 1)]);
+  }
+  let retrying = false;
+  async function retryNow(n = 0) {
+    if (online || retrying || !configured) return;
+    retrying = true;
+    clearTimeout(retryTimer);
+    setStatus('connecting');
+    try {
+      const s = await attempt(15000);
+      goOnline(s);
+      onlineListeners.slice().forEach((f) => { try { f(s); } catch (err) { console.warn(err); } });
+    } catch (err) {
+      lastError = err;
+      setStatus('offline');
+      retryLater(n + 1);
+    } finally {
+      retrying = false;
+    }
+  }
+  // Coming back from a dropped connection: try straight away.
+  window.addEventListener('online', () => { if (!online) retryNow(0); });
+
+  let resolveOnline;
+  const whenOnline = new Promise((res) => { resolveOnline = res; });
+  onlineListeners.push((s) => resolveOnline(s));
+  ready.then(() => { if (online) resolveOnline(online); });
 
   const call = (name) => async (...args) => { await ready; return active[name](...args); };
   return {
     ready,
     get mode() { return online ? 'online' : 'local'; },
+    // Connection state for the offline notice: 'connecting', 'online', 'offline', or 'local'
+    // (Supabase not configured, so there's nothing to connect to).
+    get status() { return status; },
+    get lastError() { return lastError; },
+    configured,
     local,
     online: () => online,
+    whenOnline,                                         // resolves when connected (maybe never)
+    onOnline: (f) => onlineListeners.push(f),           // called if it connects after starting offline
+    onStatus: (f) => statusListeners.push(f),
+    retryNow: () => retryNow(0),
     newId: local.newId,
     allItems: call('allItems'),
     putItem: call('putItem'),

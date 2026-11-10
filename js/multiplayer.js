@@ -564,8 +564,9 @@
 
   async function start() {
     await MuseumStore.ready;
-    const online = MuseumStore.online();
-    if (!online) return; // offline: no multiplayer
+    if (!MuseumStore.configured) return; // no online museum set up: no multiplayer
+    // Offline at first: wait until the online museum is reachable (it keeps retrying).
+    const online = MuseumStore.online() || await MuseumStore.whenOnline;
 
     const scene = document.querySelector('a-scene');
     container = new THREE.Group();

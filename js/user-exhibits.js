@@ -1041,11 +1041,34 @@ window.MuseumItems = (() => {
   }
 
   // Load saved exhibits for every visitor once the scene is ready.
+  let loading = null;
   document.addEventListener('DOMContentLoaded', () => {
     const scene = document.querySelector('a-scene');
-    const go = () => loadAll().catch((err) => console.warn('Could not load saved exhibits', err));
+    const go = () => { loading = loadAll().catch((err) => console.warn('Could not load saved exhibits', err)); };
     if (scene.hasLoaded) go(); else scene.addEventListener('loaded', go, { once: true });
   });
+
+  // Started offline (showing this browser's copy), then the online museum became reachable:
+  // swap in the shared exhibits in place, without a reload, so nobody is pulled out of VR.
+  async function switchToOnline() {
+    if (loading) await loading;
+    let items = await MuseumStore.allItems();
+    if (!items.length && !(await MuseumStore.getMeta('seeded'))) items = JSON.parse(JSON.stringify(STARTERS));
+    for (const kind of ALWAYS_THERE) {
+      if (!items.some((r) => r.kind === kind)) items.push(JSON.parse(JSON.stringify(STARTERS.find((r) => r.kind === kind))));
+    }
+    const keep = new Set(items.map((r) => r.id));
+    for (const id of [...lastBuilt.keys()]) if (!keep.has(id)) discard(id);
+    for (const r of items) {
+      if (lastBuilt.get(r.id) === JSON.stringify(r)) continue; // same as the local copy
+      try { await build(r); } catch (err) { console.warn('Could not load exhibit', r.title, err); }
+    }
+    if (!subscribed) {
+      subscribed = true;
+      MuseumStore.onChange(onRemoteChange);
+    }
+  }
+  MuseumStore.onOnline(() => switchToOnline().catch((err) => console.warn('Could not load the online museum', err)));
 
   // Remove an item for good, cancelling any rebuild still in progress.
   function discard(id) {
