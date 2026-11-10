@@ -15,6 +15,7 @@
   const SEND_HZ = 6;           // max position updates per second (only sent when you move)
   const HEARTBEAT_MS = 2500;   // resend now and then even when still, so newcomers see you
   const STALE_MS = 15000;      // hide a robot that hasn't been heard from for this long (and has left presence)
+  const LEAVE_GRACE_MS = 10000; // keep a robot this long after it drops out of presence, in case it's back
   const PRESENCE_POSE_MS = 4000; // how often your position is also saved in presence while you move
   const BUBBLE_MS = 7000;      // how long a chat bubble stays above a robot
   const MAX_CHAT = 200;        // characters per message
@@ -630,7 +631,13 @@
       const ids = Object.keys(state);
       if (chatCount) chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
       ids.filter((id) => id !== myId).forEach((id) => { ensurePeer(id, state[id][0] || {}).inPresence = true; });
-      [...peers.keys()].forEach((id) => { if (!ids.includes(id)) removePeer(id); });
+      // Gone from presence: wait a little before removing the robot, since a brief reconnect
+      // (theirs or ours) also drops them for a moment and made robots flicker.
+      [...peers.entries()].forEach(([id, p]) => {
+        if (ids.includes(id)) { p.goneSince = 0; return; }
+        p.inPresence = false;
+        if (!p.goneSince) p.goneSince = performance.now();
+      });
       syncWaiters.slice().forEach((f) => f());
       if (present && !isAdmin && !withinLimit()) {
         // Lost a simultaneous race for the last place: step back out and wait.
@@ -773,6 +780,20 @@
     animate(scene);
   }
 
+  // A steady tick that keeps going in a background tab. Browsers slow ordinary timers in hidden
+  // tabs right down (to once a minute after about 5 minutes), which froze a computer visitor
+  // for everyone in VR while they had the headset on. Timers inside a worker aren't slowed.
+  function steadyTick(fn, ms) {
+    try {
+      const src = `setInterval(() => postMessage(0), ${Math.max(16, Math.round(ms))});`;
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      w.onmessage = fn;
+      return;
+    } catch (e) { /* no workers: fall back to a normal timer */ }
+    setInterval(fn, ms);
+  }
+
   // Send my head (and VR hands) position, only when it changes noticeably.
   function startPoseLoop(scene) {
     const cam = document.querySelector('#camera');
@@ -780,7 +801,7 @@
     const hand = new THREE.Vector3();
     let last = null, lastAt = 0;
     const r2 = (n) => Math.round(n * 100) / 100;
-    setInterval(() => {
+    steadyTick(() => {
       if (!channel || !isPresent) return; // invisible to others until named and let in
       cam.object3D.getWorldPosition(pos);
       cam.object3D.getWorldDirection(fwd).negate(); // the camera entity looks down -z
@@ -834,6 +855,10 @@
         // Still in presence = still in the museum: keep them where they were last seen,
         // even if their position updates have paused.
         if (!p.inPresence && now - p.lastSeen > STALE_MS) robot.root.visible = false;
+        if (p.goneSince && now - p.goneSince > LEAVE_GRACE_MS && now - p.lastSeen > LEAVE_GRACE_MS) {
+          removePeer(id); // really left
+          return;
+        }
         if (!p.target || !robot.root.visible) return;
         const c = p.cur, t = p.target;
         c.x += (t.x - c.x) * k; c.y += (t.y - c.y) * k; c.z += (t.z - c.z) * k;
