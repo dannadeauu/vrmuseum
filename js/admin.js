@@ -16,12 +16,13 @@
   const DEFAULT_SIZE = { image: 1.6, pdf: 0.9, model: 0.8 };
   const SIZE_RANGE = {
     image: [0.3, 4], pdf: [0.3, 2.5], model: [0.2, 3],
-    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8], customizer: [1, 1]
+    placeholder: [0.3, 4], knot: [0.3, 2.5], bench: [1, 4], sign: [0.4, 8], customizer: [1, 1], infodesk: [1.4, 1.4]
   };
   const KIND_LABEL = {
     image: 'Image', pdf: 'PDF', model: '3D model',
     placeholder: 'Painting (starter)', knot: 'Sculpture (starter)', bench: 'Bench', sign: 'Sign',
-    customizer: 'Avatar station (can be moved, not deleted)'
+    customizer: 'Avatar station (can be moved, not deleted)',
+    infodesk: 'Info desk (can be moved, not deleted)'
   };
   const isFlat = (rec) => MuseumItems.FLAT_KINDS.includes(rec.kind); // walls or floor; everything else floor only
   const ROOM_HEIGHT = 6;   // wall height of the rotunda
@@ -94,6 +95,9 @@
             <option value="letters-light">Letters only, light</option>
           </select>
         </label>
+        <label data-show="desk">Computer link <input id="ed-link" type="url" placeholder="https://…" spellcheck="false"></label>
+        <p data-show="desk" class="admin-hint" id="ed-link-note">Visitors click the computer on the desk to browse this website.</p>
+        <label data-show="desk">Hanging sign text <input id="ed-sign-text" type="text" maxlength="24"></label>
         <label data-show="text">Title <input id="ed-title" type="text"></label>
         <label data-show="text">Artist <input id="ed-artist" type="text"></label>
         <label data-show="text">Year <input id="ed-year" type="text"></label>
@@ -153,6 +157,13 @@
     $('#ed-rot').addEventListener('input', (e) => edit({ rotationY: parseFloat(e.target.value) }));
     $('#ed-plinth').addEventListener('change', (e) => edit({ plinth: e.target.checked }));
     $('#ed-text').addEventListener('input', (e) => edit({ text: e.target.value, title: e.target.value.split('\n')[0] || 'Sign' }));
+    $('#ed-link').addEventListener('input', (e) => {
+      const link = window.InfoDesk.normaliseLink(e.target.value);
+      $('#ed-link-note').textContent = !e.target.value.trim() ? 'No link: the computer will say there is nothing to browse yet.'
+        : link ? `Visitors will browse ${link}` : 'That doesn\'t look like a web address (it should start with https://).';
+      if (link || !e.target.value.trim()) edit({ link });
+    });
+    $('#ed-sign-text').addEventListener('input', (e) => edit({ signText: e.target.value.trim() || window.InfoDesk.DEFAULT_SIGN }));
     $('#ed-style').addEventListener('change', (e) => edit({ style: e.target.value }));
     $('#ed-stand').addEventListener('change', (e) => edit({ stand: e.target.checked }));
     $('#ed-spin').addEventListener('change', (e) => edit({ spin: e.target.checked }));
@@ -505,6 +516,9 @@
     $('#ed-hover').checked = !!rec.hover;
     $('#ed-text').value = rec.text || '';
     $('#ed-style').value = rec.style || 'bronze';
+    $('#ed-link').value = rec.link || '';
+    $('#ed-link-note').textContent = 'Visitors click the computer on the desk to browse this website.';
+    $('#ed-sign-text').value = rec.signText || '';
 
     const model = !isFlat(rec); // floor-only piece: 3D model, sculpture or bench
     const floorFlat = !model && rec.mount === 'floor';
@@ -514,10 +528,11 @@
       spin: rec.kind === 'model' || rec.kind === 'knot',
       hover: rec.kind === 'model' || rec.kind === 'knot',
       stand: floorFlat,
-      text: !['bench', 'sign', 'customizer'].includes(rec.kind),
-      size: rec.kind !== 'customizer',
-      delete: rec.kind !== 'customizer',
-      sign: rec.kind === 'sign'
+      text: !['bench', 'sign', 'customizer', 'infodesk'].includes(rec.kind),
+      size: !MuseumItems.ALWAYS_THERE.includes(rec.kind),
+      delete: !MuseumItems.ALWAYS_THERE.includes(rec.kind),
+      sign: rec.kind === 'sign',
+      desk: rec.kind === 'infodesk'
     };
     editor.querySelectorAll('[data-show]').forEach((n) => { n.hidden = !show[n.dataset.show]; });
     $('#ed-mount').textContent = model ? 'On the floor' : floorFlat
@@ -552,8 +567,8 @@
   async function deleteSelected() {
     if (!selected) return;
     const rec = selected;
-    if (rec.kind === 'customizer') {
-      status('The avatar station can be moved and rotated, but not deleted.');
+    if (MuseumItems.ALWAYS_THERE.includes(rec.kind)) {
+      status(`The ${rec.kind === 'infodesk' ? 'info desk' : 'avatar station'} can be moved and rotated, but not deleted.`);
       return;
     }
     const note = rec.fileId

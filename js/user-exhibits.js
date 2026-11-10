@@ -822,7 +822,7 @@ window.MuseumItems = (() => {
     const make = {
       image: buildImage, pdf: buildPdf, model: buildModel,
       placeholder: buildPlaceholder, knot: buildKnot, bench: buildBench, sign: buildSign,
-      customizer: buildCustomizer
+      customizer: buildCustomizer, infodesk: (r) => window.InfoDesk.build(r, baseEntity)
     }[record.kind];
     if (!make) return null;
     const token = {};
@@ -898,6 +898,12 @@ window.MuseumItems = (() => {
     {
       id: 'starter-avatar-station', kind: 'customizer', title: 'Avatar station',
       position: { x: -5.6, y: 0, z: 3.6 }, rotationY: 123, size: 1
+    },
+    {
+      // Info desk in the bay to the left of the "VR MUSEUM" sign (south wall), facing the centre.
+      id: 'starter-info-desk', kind: 'infodesk', title: 'Info desk',
+      link: 'https://en.wikipedia.org/wiki/Virtual_reality', signText: 'Info Zone',
+      position: { x: 3.6, y: 0, z: 6.24 }, rotationY: -150, size: 1.4
     },
     { id: 'starter-bench-west', kind: 'bench', position: { x: -4.2, y: 0, z: 0 }, rotationY: 90, size: 2.4, title: 'Bench' },
     { id: 'starter-bench-east', kind: 'bench', position: { x: 4.2, y: 0, z: 0 }, rotationY: 90, size: 2.4, title: 'Bench' },
@@ -982,6 +988,7 @@ window.MuseumItems = (() => {
 
   // ---------- loading + live updates ----------
   const lastBuilt = new Map(); // id -> JSON of the version on screen
+  const ALWAYS_THERE = ['customizer', 'infodesk'];
   let subscribed = false;
 
   function onRemoteChange(ev) {
@@ -1008,10 +1015,11 @@ window.MuseumItems = (() => {
       await ensureStarters();
       items = await MuseumStore.allItems();
     }
-    // The avatar station is always in the museum (admins can move it, not delete it). If it
-    // was never saved, show it at its default spot; the first admin move saves it.
-    if (!items.some((r) => r.kind === 'customizer')) {
-      items.push(JSON.parse(JSON.stringify(STARTERS.find((r) => r.kind === 'customizer'))));
+    // The avatar station and the info desk are always in the museum (admins can move and edit
+    // them, not delete them). If one was never saved, show it at its default spot; the first
+    // admin edit saves it.
+    for (const kind of ALWAYS_THERE) {
+      if (!items.some((r) => r.kind === kind)) items.push(JSON.parse(JSON.stringify(STARTERS.find((r) => r.kind === kind))));
     }
     for (const r of items) {
       try { await build(r); } catch (err) { console.warn('Could not load exhibit', r.title, err); }
@@ -1041,11 +1049,11 @@ window.MuseumItems = (() => {
   }
 
   const FLAT_KINDS = ['image', 'pdf', 'placeholder', 'sign'];     // hang on walls or stand on the floor
-  const FLOOR_KINDS = ['model', 'knot', 'bench', 'customizer'];         // always on the floor
+  const FLOOR_KINDS = ['model', 'knot', 'bench', 'customizer', 'infodesk']; // always on the floor
 
   return {
     build, find, discard, clearScene, loadAll, restoreStarters, inspect, kindOf, forgetFile, floorCenterY,
     signAspect, SIGN_STYLES, LAYOUT_VERSION, prepareLocal: ensureStarters, inspectLink, seedOnline,
-    FLAT_KINDS, FLOOR_KINDS, PLINTH_H
+    FLAT_KINDS, FLOOR_KINDS, PLINTH_H, ALWAYS_THERE
   };
 })();
