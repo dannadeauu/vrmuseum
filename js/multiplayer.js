@@ -14,7 +14,8 @@
 (() => {
   const SEND_HZ = 6;           // max position updates per second (only sent when you move)
   const HEARTBEAT_MS = 2500;   // resend now and then even when still, so newcomers see you
-  const STALE_MS = 15000;      // hide a robot that hasn't been heard from for this long
+  const STALE_MS = 15000;      // hide a robot that hasn't been heard from for this long (and has left presence)
+  const PRESENCE_POSE_MS = 4000; // how often your position is also saved in presence while you move
   const BUBBLE_MS = 7000;      // how long a chat bubble stays above a robot
   const MAX_CHAT = 200;        // characters per message
   // People in the museum at once (logged-in admins don't count). Set in js/supabase-config.js.
@@ -382,6 +383,13 @@
       p.look = lookKey(look);
       p.name = ''; // re-make the name tag with the new colour
     }
+    // Last position saved in presence: use it when the live stream has nothing newer.
+    if (Array.isArray(meta.h) && meta.h.length === 3 && meta.h.every(Number.isFinite) &&
+        (!p.target || performance.now() - p.lastSeen > 1500)) {
+      p.target = { x: meta.h[0], y: meta.h[1], z: meta.h[2], yaw: +meta.yaw || 0, pitch: +meta.pitch || 0 };
+      p.lastSeen = performance.now();
+      if (!p.robot.root.visible) { Object.assign(p.cur, p.target); p.robot.root.visible = true; }
+    }
     if (meta.name !== undefined && cleanName(meta.name) !== p.name) {
       p.name = cleanName(meta.name) || 'Visitor';
       if (p.tag) { p.robot.bob.remove(p.tag); p.tag.material.map.dispose(); p.tag.material.dispose(); }
@@ -559,6 +567,9 @@
 
   // ---------- realtime ----------
   let channel, track;
+  let myPose = null;   // my latest position (also saved in presence)
+  let trackedAt = 0;   // when presence was last updated
+  let trackedPose = null; // the position presence has
   let isPresent = false; // counted in the museum (not waiting outside)
   const setPresent = (v) => { isPresent = v; };
 
@@ -583,10 +594,18 @@
       config: { presence: { key: myId }, broadcast: { self: false } }
     });
 
-    track = () => channel.track({
-      name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device,
-      hue: myLook.hue, hat: myLook.hat, eyes: myLook.eyes
-    });
+    // Presence holds who is here, their look and their last position. The position is also
+    // streamed as fast 'pose' broadcasts, but those can pause (a computer tab in the background,
+    // a headset busy entering VR), so presence keeps everyone visible where they were last seen.
+    track = () => {
+      trackedAt = performance.now();
+      trackedPose = myPose;
+      return channel.track({
+        name: myName, color: '#' + myColour.getHexString(), joinedAt, admin: isAdmin, device,
+        hue: myLook.hue, hat: myLook.hat, eyes: myLook.eyes,
+        ...(myPose ? { h: myPose.h, yaw: myPose.yaw, pitch: myPose.pitch } : {})
+      });
+    };
     // Changed look at the avatar station: everyone sees the new robot right away.
     lookListeners.push(() => {
       myColour = hueColour(myLook.hue);
@@ -610,7 +629,7 @@
       const state = channel.presenceState();
       const ids = Object.keys(state);
       if (chatCount) chatCount.textContent = ids.length <= 1 ? 'Just you' : `${ids.length} people here`;
-      ids.filter((id) => id !== myId).forEach((id) => ensurePeer(id, state[id][0] || {}));
+      ids.filter((id) => id !== myId).forEach((id) => { ensurePeer(id, state[id][0] || {}).inPresence = true; });
       [...peers.keys()].forEach((id) => { if (!ids.includes(id)) removePeer(id); });
       syncWaiters.slice().forEach((f) => f());
       if (present && !isAdmin && !withinLimit()) {
@@ -785,7 +804,19 @@
         last = payload;
         lastAt = now;
       }
+      // Also save the position in presence (at most every few seconds) when it has changed
+      // since the last save, including the spot where you stopped.
+      myPose = payload;
+      const saved = trackedPose;
+      const drifted = !saved || Math.hypot(payload.h[0] - saved.h[0], payload.h[1] - saved.h[1], payload.h[2] - saved.h[2]) > 0.1 ||
+        Math.abs(Math.atan2(Math.sin(payload.yaw - saved.yaw), Math.cos(payload.yaw - saved.yaw))) > 0.2;
+      if (drifted && now - trackedAt > PRESENCE_POSE_MS) track();
     }, 1000 / SEND_HZ);
+    // Going to the background (another window, the screen sleeping, putting on a headset):
+    // timers slow right down, so save where we are in presence now.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && channel && isPresent) track();
+    });
   }
 
   // Smoothly move every robot toward its latest position; float, wave, expire.
@@ -800,7 +831,9 @@
       const k = 1 - Math.exp(-dt * 10);
       peers.forEach((p, id) => {
         const { robot } = p;
-        if (now - p.lastSeen > STALE_MS) robot.root.visible = false;
+        // Still in presence = still in the museum: keep them where they were last seen,
+        // even if their position updates have paused.
+        if (!p.inPresence && now - p.lastSeen > STALE_MS) robot.root.visible = false;
         if (!p.target || !robot.root.visible) return;
         const c = p.cur, t = p.target;
         c.x += (t.x - c.x) * k; c.y += (t.y - c.y) * k; c.z += (t.z - c.z) * k;

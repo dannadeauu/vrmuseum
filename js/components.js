@@ -1,6 +1,29 @@
 /* global AFRAME, THREE */
 
 /**
+ * One trigger press = one click, from the hand that pressed it.
+ * In VR, A-Frame's laser cursors also listen to the headset's 'selectstart'/'selectend' events,
+ * which fire for EITHER controller. So a press on one trigger clicked whatever both lasers were
+ * pointing at: with one laser on "Prev" and the other on "Next", the page went back and forward
+ * at once and seemed stuck. Each laser cursor now ignores select events from the other hand.
+ */
+(() => {
+  const proto = AFRAME.components.cursor.Component.prototype;
+  ['onCursorDown', 'onCursorUp'].forEach((name) => {
+    const original = proto[name];
+    proto[name] = function (evt) {
+      if (evt && (evt.type === 'selectstart' || evt.type === 'selectend') && this.data.rayOrigin === 'entity') {
+        const lc = this.el.components['laser-controls'];
+        const hand = lc && lc.data.hand;
+        const from = evt.inputSource && evt.inputSource.handedness;
+        if (hand && from && from !== hand) return; // the other controller's press
+      }
+      return original.call(this, evt);
+    };
+  });
+})();
+
+/**
  * thumbstick-locomotion — put on the rig.
  * Left stick: glide in the direction you're looking, easing in and out (no lurches).
  * Right stick: smooth turning (or snap turns with turn: snap).

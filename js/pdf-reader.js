@@ -229,16 +229,23 @@ window.PdfReader = (() => {
     el.object3D.position.set(head.x + fwd.x * 1.1, head.y - 0.05, head.z + fwd.z * 1.1);
     el.object3D.rotation.set(0, Math.atan2(-fwd.x, -fwd.z), 0);
 
-    const board = document.createElement('a-entity'); // dark backing board
-    board.setAttribute('geometry', { primitive: 'plane', width: 1.12, height: 1.32 });
+    // Dark backing board: from below the page buttons to above the title and Close button.
+    // It and the page catch the lasers, so a click on the reader never reaches the exhibit
+    // behind it (which would reopen the reader at that exhibit's page).
+    const board = document.createElement('a-entity');
+    board.setAttribute('geometry', { primitive: 'plane', width: 1.16, height: 1.52 });
     board.setAttribute('material', { shader: 'flat', color: '#1b1c22', opacity: 0.96, transparent: true });
-    board.setAttribute('position', '0 -0.02 -0.01');
+    board.setAttribute('position', '0 0.005 -0.01');
+    board.classList.add('clickable');
+    board.addEventListener('click', (e) => e.stopPropagation());
     el.appendChild(board);
 
     const page = document.createElement('a-entity');
     page.setAttribute('geometry', { primitive: 'plane', width: 0.9, height: 1.1 });
     page.setAttribute('material', { shader: 'flat', color: '#ffffff' });
     page.setAttribute('position', '0 0.03 0');
+    page.classList.add('clickable');
+    page.addEventListener('click', (e) => e.stopPropagation());
     el.appendChild(page);
 
     const title = document.createElement('a-entity');
@@ -287,7 +294,8 @@ window.PdfReader = (() => {
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, c.width, c.height);
-    await p.render({ canvasContext: ctx, viewport: vp }).promise;
+    // Not p.render() directly: that stalls inside VR on Quest (see MuseumPdfRender).
+    await (window.MuseumPdfRender ? window.MuseumPdfRender(p, ctx, vp) : p.render({ canvasContext: ctx, viewport: vp }).promise);
     if (token !== renderToken || !vrEl) return;
     // Fit the page into a 0.9 x 1.1 m area, keeping its shape.
     const aspect = c.height / c.width;

@@ -70,6 +70,20 @@ window.MuseumItems = (() => {
     return pdfjsPromise;
   }
 
+  // Draw a PDF page into a canvas. pdf.js normally paces this with window.requestAnimationFrame,
+  // which the Quest Browser pauses during an immersive VR session, so a page drawn in VR never
+  // finished and stayed white. In VR, render with the 'print' intent instead (it doesn't use
+  // requestAnimationFrame) and pause between chunks with setTimeout, so the headset keeps its
+  // frame rate while the page draws.
+  function renderPdfPage(page, ctx, viewport) {
+    const scene = document.querySelector('a-scene');
+    if (!(scene && scene.is && scene.is('vr-mode'))) return page.render({ canvasContext: ctx, viewport }).promise;
+    const task = page.render({ canvasContext: ctx, viewport, intent: 'print' });
+    task.onContinue = (cont) => setTimeout(cont, 0);
+    return task.promise;
+  }
+  window.MuseumPdfRender = renderPdfPage; // the big reader (js/pdf-reader.js) uses it too
+
   async function pdfDoc(fileId) {
     if (!pdfs.has(fileId)) {
       pdfs.set(fileId, (async () => {
@@ -281,7 +295,7 @@ window.MuseumItems = (() => {
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#ffffff'; // paper colour behind transparent PDFs
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        await renderPdfPage(page, ctx, vp);
         showPage(canvas);
         label.setAttribute('text', { value: `${n} / ${doc.numPages}`, align: 'center', color: '#2b2119', width: 1 });
       });

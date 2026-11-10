@@ -68,7 +68,10 @@ window.MuseumLocalStore = (() => {
 // ---------------------------------------------------------------------------
 function makeSupabaseStore({ url, key }) {
   const sb = window.supabase.createClient(url, key, {
-    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'museum-auth' }
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'museum-auth' },
+    // Heartbeats from a web worker: background tabs slow down ordinary timers so much that the
+    // server can drop the connection (and the visitor vanishes for everyone else).
+    realtime: { worker: true }
   });
   const BUCKET = 'museum-files';
   const check = ({ data, error }) => { if (error) throw error; return data; };
