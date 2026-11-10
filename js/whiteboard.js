@@ -6,7 +6,7 @@
  * A whiteboard is an ordinary flat exhibit (framed like a painting, with a plaque; built in
  * js/user-exhibits.js) whose picture is a drawing canvas. Under the frame is a row of
  * controls every visitor can use: colour swatches, an eraser, a brush-size slider (with a dot showing
- * the size) and Clear.
+ * the size), Undo (your own last stroke; also Ctrl/Cmd+Z) and Clear.
  *
  * Drawing works with the mouse (drag on the board), touch, and the VR lasers (hold the
  * trigger). Dragging on a board or the slider doesn't turn the view.
@@ -124,7 +124,13 @@ window.MuseumBoards = (() => {
       b.live.delete(m.id);
       if (!b.strokes.some((x) => x.id === s.id)) b.strokes.push(s);
     });
+    channel.on('broadcast', { event: 'undo' }, ({ payload: m }) => {
+      const b = boards.get(m.b);
+      if (b && Array.isArray(m.ids)) removeStrokes(b, m.ids);
+    });
     channel.on('broadcast', { event: 'clear' }, ({ payload: m }) => {
+      history.delete(m.b); // nothing of ours left to undo there
+      notifyUi();
       const b = boards.get(m.b);
       if (!b) return;
       b.strokes = []; b.live.clear();
@@ -165,11 +171,16 @@ window.MuseumBoards = (() => {
     const o = online();
     if (!o) { saveLocal(b); return; }
     if (!tableOk) return;
-    const { error } = await o.sb.from(TABLE).insert({ board_id: b.id, stroke: s });
-    if (error) tableMissing(error);
+    const done = o.sb.from(TABLE).insert({ board_id: b.id, stroke: s }).then(({ error }) => { if (error) tableMissing(error); });
+    saving.set(s.id, done);
+    await done;
+    saving.delete(s.id);
   }
+  const saving = new Map(); // stroke id -> insert still in flight
 
   async function clearBoard(id, { broadcast = true } = {}) {
+    history.delete(id);
+    notifyUi();
     const b = boards.get(id);
     if (b) { b.strokes = []; b.live.clear(); redraw(b); }
     if (broadcast) send('clear', { b: id });
@@ -180,12 +191,59 @@ window.MuseumBoards = (() => {
     if (error) tableMissing(error);
   }
 
+  // ------------------------------------------------------------------ undo (this visitor's own strokes)
+  // Per board, a stack of this visitor's gestures (one press-drag-release; very long ones are
+  // several strokes). Undo takes back the latest gesture, eraser gestures included, for everyone.
+  // Kept for this visit only.
+  const history = new Map(); // board id -> [[stroke ids], ...]
+  let lastBoard = null;      // for Ctrl/Cmd+Z
+  const canUndo = (id) => !!(history.get(id) || []).length;
+
+  function removeStrokes(b, ids) {
+    const gone = new Set(ids);
+    const before = b.strokes.length;
+    b.strokes = b.strokes.filter((s) => !gone.has(s.id));
+    ids.forEach((i) => b.live.delete(i));
+    if (b.strokes.length !== before) redraw(b);
+  }
+
+  async function undo(id) {
+    const stack = history.get(id);
+    if (!stack || !stack.length || (mine && mine.b.id === id)) return; // nothing to undo, or still drawing
+    const ids = stack.pop();
+    notifyUi();
+    const b = boards.get(id);
+    if (b) removeStrokes(b, ids);
+    send('undo', { b: id, ids });
+    const o = online();
+    if (!o) { if (b) saveLocal(b); return; }
+    if (!tableOk) return;
+    await Promise.all(ids.map((i) => saving.get(i)).filter(Boolean)); // let their saves land first
+    const { error } = await o.sb.from(TABLE).delete().eq('board_id', id).in('stroke->>id', ids);
+    if (error) tableMissing(error);
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== 'z' || !lastBoard) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return; // let fields undo text
+    if (blocked() || !canUndo(lastBoard)) return;
+    e.preventDefault();
+    undo(lastBoard);
+  });
+
   // ------------------------------------------------------------------ drawing (this visitor)
 
   let mine = null; // { b, s, sentTo, lastSend }
   const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 
-  function penDown(b, boardWidth, x, y) {
+  // `more`: carrying on the same gesture (a long stroke being split, or back onto the board mid-drag).
+  function penDown(b, boardWidth, x, y, more = false) {
+    if (!more || !history.get(b.id)) {
+      if (!history.has(b.id)) history.set(b.id, []);
+      history.get(b.id).push([]);
+    }
+    lastBoard = b.id;
     const s = { id: newId(), c: brush.colour, s: +(brushMetres() / boardWidth).toFixed(4), p: [r4(x), r4(y)] };
     mine = { b, s, boardWidth, sentTo: 0, lastSend: 0 };
     b.live.set(s.id, s);
@@ -203,7 +261,7 @@ window.MuseumBoards = (() => {
     if (p.length / 2 >= MAX_POINTS) { // split very long strokes, carrying on seamlessly
       const { b, boardWidth } = mine;
       penUp();
-      penDown(b, boardWidth, x, y);
+      penDown(b, boardWidth, x, y, true);
     }
   }
   function penUp() {
@@ -213,6 +271,9 @@ window.MuseumBoards = (() => {
     mine = null;
     b.live.delete(s.id);
     b.strokes.push(s);
+    const stack = history.get(b.id);
+    if (stack && stack.length) stack[stack.length - 1].push(s.id);
+    notifyUi();
     send('end', { b: b.id, id: s.id });
     saveStroke(b, s);
   }
@@ -419,7 +480,7 @@ window.MuseumBoards = (() => {
       move: (uv) => {
         if (!drawing) return;
         if (!uv) { penUp(); drawing = 'paused'; return; }      // left the board: lift the pen
-        if (drawing === 'paused') { drawing = true; penDown(b, w, uv.x, 1 - uv.y); return; }
+        if (drawing === 'paused') { drawing = true; penDown(b, w, uv.x, 1 - uv.y, true); return; }
         penMove(uv.x, 1 - uv.y);
       },
       up: () => { if (drawing === true) penUp(); drawing = false; }
@@ -428,7 +489,7 @@ window.MuseumBoards = (() => {
     // ---- controls row: colours, brush size, clear
     const row = entity(null, null, `0 ${controlsY} 0.012`);
     const SW = 0.042, STEP = 0.105, TRACK = 0.42;
-    const total = COLOURS.length * STEP + SW * 2 + 0.08 + TRACK + 0.06 + 0.16 + 0.06 + 0.24; // colours + eraser
+    const total = COLOURS.length * STEP + SW * 2 + 0.08 + TRACK + 0.06 + 0.16 + 0.06 + 0.22 + 0.04 + 0.24; // colours + eraser … undo, clear
     let x = -total / 2;
     row.appendChild(entity({ primitive: 'plane', width: total + 0.08, height: 0.15 },
       { shader: 'flat', color: '#f4f2ee', opacity: 0.92, transparent: true }, '0 0 -0.002'));
@@ -482,7 +543,18 @@ window.MuseumBoards = (() => {
     dotRing.setAttribute('position', `${dotX} 0 0.004`);
     x += 0.16 + 0.06;
 
-    // Clear.
+    // Undo (your own last stroke) and Clear.
+    const button = (label, width, cx, fn) => {
+      const btn = entity({ primitive: 'plane', width, height: 0.09 }, { shader: 'flat', color: '#1b1b1f' }, `${cx} 0 0.002`, 'clickable');
+      btn.setAttribute('text', { value: label, align: 'center', color: '#f4f2ee', width: 0.9, zOffset: 0.002 });
+      btn.addEventListener('mouseenter', () => { if (btn.dataset.off !== '1') btn.setAttribute('material', 'color', '#ffb347'); });
+      btn.addEventListener('mouseleave', () => btn.setAttribute('material', 'color', btn.dataset.off === '1' ? '#8a847a' : '#1b1b1f'));
+      onClick(btn, fn);
+      row.appendChild(btn);
+      return btn;
+    };
+    const undoBtn = button('Undo', 0.22, x + 0.11, () => undo(r.id));
+    x += 0.22 + 0.04;
     const clear = entity({ primitive: 'plane', width: 0.24, height: 0.09 }, { shader: 'flat', color: '#1b1b1f' }, `${x + 0.12} 0 0.002`, 'clickable');
     clear.setAttribute('text', { value: 'Clear', align: 'center', color: '#f4f2ee', width: 0.9, zOffset: 0.002 });
     clear.addEventListener('mouseenter', () => clear.setAttribute('material', 'color', '#ffb347'));
@@ -502,6 +574,11 @@ window.MuseumBoards = (() => {
       dot.setAttribute('material', 'color', erasing ? '#ffffff' : brush.colour);
       dotRing.setAttribute('visible', erasing);
       dotRing.setAttribute('geometry', { radiusInner: rad, radiusOuter: rad + 0.004 });
+      const off = !canUndo(r.id); // greyed out until you've drawn something here
+      if ((undoBtn.dataset.off === '1') !== off) {
+        undoBtn.dataset.off = off ? '1' : '0';
+        undoBtn.setAttribute('material', 'color', off ? '#8a847a' : '#1b1b1f');
+      }
     };
     uiListeners.add(update);
     update();
@@ -509,5 +586,5 @@ window.MuseumBoards = (() => {
     return el;
   }
 
-  return { attach, clearBoard, COLOURS, ERASER };
+  return { attach, clearBoard, undo, COLOURS, ERASER };
 })();
