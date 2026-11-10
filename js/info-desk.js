@@ -552,9 +552,19 @@ window.InfoDesk = (() => {
       g.add(mesh(new THREE.BoxGeometry(0.22, 0.012, 0.16), basic({ color: 0x232327 }), 0, 0.006, -0.03));
       g.add(mesh(new THREE.CylinderGeometry(0.016, 0.02, 0.2, 10), basic({ color: 0x2b2b2f }), 0, 0.11, -0.06));
       g.add(mesh(new THREE.BoxGeometry(0.58, 0.38, 0.03), dark, 0, 0.36, -0.04));
-      const screenMat = basic({ map: screenTexture(r.link), toneMapped: false });
-      const screen = mesh(new THREE.PlaneGeometry(0.54, 0.338), screenMat, 0, 0.36, -0.0245);
+      // The screen stands 6 mm proud of the bezel and is biased towards the camera, so from far
+      // away the depth buffer can't confuse it with the black monitor front behind it.
+      const screenMat = basic({
+        map: screenTexture(r.link), toneMapped: false,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4
+      });
+      const screen = mesh(new THREE.PlaneGeometry(0.54, 0.338), screenMat, 0, 0.36, -0.019);
       g.add(screen);
+      if (!clickedBefore()) {
+        const alert = alertSprite();
+        g.add(alert);
+        alerts.add(alert);
+      }
       el.setObject3D('mesh', g);
       el.addEventListener('mouseenter', () => { screenMat.color.setRGB(1.15, 1.08, 0.95); el.sceneEl.canvas.style.cursor = 'pointer'; });
       el.addEventListener('mouseleave', () => { screenMat.color.setRGB(1, 1, 1); el.sceneEl.canvas.style.cursor = ''; });
@@ -562,9 +572,55 @@ window.InfoDesk = (() => {
     el.addEventListener('click', (e) => {
       if (el.sceneEl.is('admin-mode')) return; // admins clicking select the desk instead
       e.stopPropagation();
+      markClicked();
       open(r.link, r.title);
     });
     return el;
+  }
+
+  // ---- "!" above the computer until this visitor first clicks it (remembered in this browser).
+  const CLICKED_KEY = 'museum-info-desk-clicked';
+  let clicked = false;
+  function clickedBefore() {
+    if (clicked) return true;
+    try { clicked = localStorage.getItem(CLICKED_KEY) === '1'; } catch (e) { /* private mode */ }
+    return clicked;
+  }
+  const alerts = new Set(); // every "!" on screen (the desk is rebuilt when an admin edits it)
+  function markClicked() {
+    clicked = true;
+    try { localStorage.setItem(CLICKED_KEY, '1'); } catch (e) { /* private mode: just this visit */ }
+    alerts.forEach((a) => { if (a.parent) a.parent.remove(a); });
+    alerts.clear();
+  }
+
+  function alertTexture() {
+    return cached('alert', () => tex(128, 256, (g, W) => {
+      // Accent orange (#ffb347, as in the rest of the museum's UI) with a dark outline.
+      const bar = () => {
+        g.beginPath();
+        g.moveTo(W / 2 - 26, 22); g.lineTo(W / 2 + 26, 22); g.lineTo(W / 2 + 15, 160); g.lineTo(W / 2 - 15, 160);
+        g.closePath();
+      };
+      g.lineJoin = 'round';
+      g.lineWidth = 14; g.strokeStyle = '#1b1b1f';
+      bar(); g.stroke();
+      g.beginPath(); g.arc(W / 2, 205, 24, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#ffb347';
+      bar(); g.fill();
+      g.beginPath(); g.arc(W / 2, 205, 24, 0, Math.PI * 2); g.fill();
+    }));
+  }
+
+  // Always faces the viewer (also in VR) and bobs gently above the monitor.
+  function alertSprite() {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: alertTexture(), toneMapped: false, transparent: true }));
+    sprite.scale.set(0.17, 0.34, 1);
+    const baseY = 0.86;
+    sprite.position.set(0, baseY, -0.04);
+    sprite.raycast = () => {}; // not a click target (sprites need a camera on the raycaster)
+    sprite.onBeforeRender = () => { sprite.position.y = baseY + Math.sin(performance.now() / 380) * 0.025; };
+    return sprite;
   }
 
   // Height of the ceiling above a spot: the rotunda dome, or a fixed drop elsewhere.
